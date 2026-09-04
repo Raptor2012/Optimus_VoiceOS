@@ -9,6 +9,7 @@ using System.Linq;
 using Optimus.Core.Phone;
 using Optimus.Inference;
 using Optimus.Providers;
+using Optimus.Core.Voice;
 
 /// <summary>
 /// Bridges the phone endpoint to the existing STT and cleanup pipeline.
@@ -28,6 +29,9 @@ public sealed class PhoneSession : IDisposable
     private readonly Action? _onCancel;
     private readonly Action<string, string, string>? _onSending;
     private readonly Action<string, string, SendResult>? _onSendCompleted;
+    private readonly VoiceDestinationResolver? _destinationResolver;
+    private readonly Action<string, string, string, string?>? _onDraftWithDestination;
+    private readonly Action<string>? _onDestinationSelected;
     private readonly object _lock = new();
 
     private MemoryStream? _buffer;
@@ -44,7 +48,10 @@ public sealed class PhoneSession : IDisposable
         Action<string>? onStatus = null,
         Action? onCancel = null,
         Action<string, string, string>? onSending = null,
-        Action<string, string, SendResult>? onSendCompleted = null)
+        Action<string, string, SendResult>? onSendCompleted = null,
+        VoiceDestinationResolver? destinationResolver = null,
+        Action<string, string, string, string?>? onDraftWithDestination = null,
+        Action<string>? onDestinationSelected = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
@@ -54,6 +61,9 @@ public sealed class PhoneSession : IDisposable
         _onCancel = onCancel;
         _onSending = onSending;
         _onSendCompleted = onSendCompleted;
+        _destinationResolver = destinationResolver ?? (destinations != null ? CreateResolver(destinations) : null);
+        _onDraftWithDestination = onDraftWithDestination;
+        _onDestinationSelected = onDestinationSelected;
 
         _endpoint.ConnectionChanged += OnConnectionChanged;
         _endpoint.CaptureStarted += OnCaptureStarted;
@@ -62,6 +72,24 @@ public sealed class PhoneSession : IDisposable
         _endpoint.DestinationsRequested += OnDestinationsRequested;
         _endpoint.ConfirmRequested += OnConfirmRequested;
         _endpoint.CancelRequested += OnCancelRequested;
+        _endpoint.DestinationSelected += OnDestinationSelected;
+    }
+
+    private void OnDestinationSelected(object? sender, string destinationId) =>
+        _onDestinationSelected?.Invoke(destinationId);
+
+    private static VoiceDestinationResolver? CreateResolver(DestinationRegistry destinations)
+    {
+        var aliases = new List<VoiceDestinationAlias>();
+        foreach ((IDestinationAdapter adapter, _) in destinations.ProbeAll())
+        {
+            aliases.Add(new VoiceDestinationAlias(adapter.DestinationId, adapter.DisplayName));
+            if (!string.Equals(adapter.DestinationId, adapter.DisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                aliases.Add(new VoiceDestinationAlias(adapter.DestinationId, adapter.DestinationId));
+            }
+        }
+        return aliases.Count > 0 ? new VoiceDestinationResolver(aliases) : null;
     }
 
     private void OnDestinationsRequested(object? sender, EventArgs e) => PushDestinations();
@@ -254,7 +282,8 @@ public sealed class PhoneSession : IDisposable
         {
             try
             {
-                VoicePipelineResult result = await _pipeline.ProcessAsync(pcm, token).ConfigureAwait(false);
+                var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                TranscriptionResult transcription = _pipeline.TranscribeOnly(pcm, token);
 
                 // Same rule as the desktop path: a superseded utterance never overwrites a newer one.
                 if (Volatile.Read(ref _utteranceGeneration) != generation)
@@ -262,15 +291,68 @@ public sealed class PhoneSession : IDisposable
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(result.RawTranscript))
+                if (string.IsNullOrWhiteSpace(transcription.Text))
                 {
                     _endpoint.SendStatus("idle", "No speech detected");
                     return;
                 }
 
-                _endpoint.SendDraft(result.RawTranscript, result.CleanedDraft, result.TimingSummary);
+                string textToClean = transcription.Text;
+                string? targetDestinationId = null;
+
+                if (_destinationResolver != null)
+                {
+                    VoiceDestinationResolution resolution = _destinationResolver.Resolve(transcription.Text);
+                    if (resolution.Status == VoiceDestinationResolutionStatus.Resolved && resolution.DestinationId != null)
+                    {
+                        targetDestinationId = resolution.DestinationId;
+                        textToClean = resolution.PromptText;
+                        _onDestinationSelected?.Invoke(targetDestinationId);
+                    }
+                }
+
+                token.ThrowIfCancellationRequested();
+
+                CleanupResult cleanup;
+                if (!string.IsNullOrWhiteSpace(textToClean))
+                {
+                    try
+                    {
+                        cleanup = await _pipeline.Cleaner.CleanAsync(textToClean, token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        cleanup = new CleanupResult(textToClean, 0, false, ex.Message);
+                    }
+                }
+                else
+                {
+                    cleanup = new CleanupResult(string.Empty, 0, false, "Empty prompt");
+                }
+
+                totalStopwatch.Stop();
+
+                if (Volatile.Read(ref _utteranceGeneration) != generation)
+                {
+                    return;
+                }
+
+                string timings = $"audio {seconds:F1}s · STT {transcription.ElapsedMilliseconds} ms · cleanup {cleanup.ElapsedMilliseconds} ms · total {totalStopwatch.ElapsedMilliseconds} ms";
+
+                _endpoint.SendDraft(transcription.Text, cleanup.Text, timings, targetDestinationId);
                 _endpoint.SendStatus("confirm", "Review the draft");
-                _onDraft?.Invoke(result.RawTranscript, result.CleanedDraft, result.TimingSummary);
+                if (_onDraftWithDestination != null)
+                {
+                    _onDraftWithDestination.Invoke(transcription.Text, cleanup.Text, timings, targetDestinationId);
+                }
+                else
+                {
+                    _onDraft?.Invoke(transcription.Text, cleanup.Text, timings);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -301,6 +383,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.DestinationsRequested -= OnDestinationsRequested;
         _endpoint.ConfirmRequested -= OnConfirmRequested;
         _endpoint.CancelRequested -= OnCancelRequested;
+        _endpoint.DestinationSelected -= OnDestinationSelected;
 
         lock (_lock)
         {

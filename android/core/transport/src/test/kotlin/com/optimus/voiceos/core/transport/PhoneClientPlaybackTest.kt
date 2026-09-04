@@ -49,6 +49,40 @@ class PhoneClientPlaybackTest {
         }
     }
 
+    @Test fun decodesApprovalCaptureAndDestinationEvents() {
+        ServerSocket(0).use { server ->
+            val events = CopyOnWriteArrayList<PcEvent>()
+            val received = CountDownLatch(5)
+            val client = PhoneClient { event ->
+                if (event !is PcEvent.Connected) {
+                    events += event
+                    received.countDown()
+                }
+            }
+            thread(isDaemon = true) {
+                server.accept().use { socket ->
+                    PhoneFraming.read(socket.getInputStream()) // hello
+                    val output = socket.getOutputStream()
+                    json(output, JSONObject().put("t", "startApprovalCapture"))
+                    json(output, JSONObject().put("t", "stopApprovalCapture"))
+                    json(output, JSONObject().put("t", "startRedictationCapture"))
+                    json(output, JSONObject().put("t", "destinationSelected").put("destinationId", "claude"))
+                    json(output, JSONObject().put("t", "draft").put("raw", "r").put("clean", "c").put("timings", "t").put("destinationId", "claude"))
+                    Thread.sleep(100)
+                }
+            }
+
+            client.connect("127.0.0.1", server.localPort)
+            assertTrue(received.await(5, TimeUnit.SECONDS))
+            assertTrue(events[0] is PcEvent.StartApprovalCapture)
+            assertTrue(events[1] is PcEvent.StopApprovalCapture)
+            assertTrue(events[2] is PcEvent.StartRedictationCapture)
+            assertEquals("claude", (events[3] as PcEvent.DestinationSelected).destinationId)
+            assertEquals("claude", (events[4] as PcEvent.Draft).destinationId)
+            client.disconnect()
+        }
+    }
+
     private fun json(output: java.io.OutputStream, value: JSONObject) =
         PhoneFraming.write(output, PhoneFrameKind.JSON, value.toString().toByteArray(Charsets.UTF_8))
 }

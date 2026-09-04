@@ -136,6 +136,9 @@ public sealed class PhoneEndpoint : IDisposable
 
     public event EventHandler<PhoneNarrationSettingsEventArgs>? NarrationSettingsChanged;
 
+    /// <summary>The phone selected a destination.</summary>
+    public event EventHandler<string>? DestinationSelected;
+
     public void Start()
     {
         lock (_lock)
@@ -299,6 +302,10 @@ public sealed class PhoneEndpoint : IDisposable
                 RaiseNarrationSettings(json);
                 break;
 
+            case "selectDestination":
+                RaiseSelectDestination(json);
+                break;
+
             default:
                 break;
         }
@@ -332,6 +339,23 @@ public sealed class PhoneEndpoint : IDisposable
             bool tools = root.TryGetProperty("narrateToolsAndSkills", out JsonElement toolsValue) &&
                          toolsValue.ValueKind == JsonValueKind.True;
             NarrationSettingsChanged?.Invoke(this, new PhoneNarrationSettingsEventArgs(mode, tools));
+        }
+        catch (JsonException) { }
+    }
+
+    private void RaiseSelectDestination(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("destinationId", out JsonElement val))
+            {
+                string? dest = val.GetString();
+                if (!string.IsNullOrWhiteSpace(dest))
+                {
+                    DestinationSelected?.Invoke(this, dest);
+                }
+            }
         }
         catch (JsonException) { }
     }
@@ -377,9 +401,23 @@ public sealed class PhoneEndpoint : IDisposable
     public void SendStatus(string state, string line) =>
         SendJson(new { t = "status", state, line });
 
-    /// <summary>Pushes the finished transcript and cleaned draft.</summary>
-    public void SendDraft(string raw, string clean, string timings) =>
-        SendJson(new { t = "draft", raw, clean, timings });
+    /// <summary>Pushes the finished transcript and cleaned draft, and optionally the chosen destination.</summary>
+    public void SendDraft(string raw, string clean, string timings, string? destinationId = null) =>
+        SendJson(destinationId != null
+            ? new { t = "draft", raw, clean, timings, destinationId }
+            : new { t = "draft", raw, clean, timings });
+
+    public void SendSelectedDestination(string destinationId) =>
+        SendJson(new { t = "destinationSelected", destinationId });
+
+    public void SendStartApprovalCapture() =>
+        SendJson(new { t = "startApprovalCapture" });
+
+    public void SendStopApprovalCapture() =>
+        SendJson(new { t = "stopApprovalCapture" });
+
+    public void SendStartRedictationCapture() =>
+        SendJson(new { t = "startRedictationCapture" });
 
     public void SendError(string message) =>
         SendJson(new { t = "error", message });

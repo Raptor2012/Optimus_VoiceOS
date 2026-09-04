@@ -450,6 +450,93 @@ public class SpokenApprovalIntegrationTests
         }
     }
 
+    private static (
+        WidgetViewModel Widget,
+        RecordingAdapter Claude,
+        RecordingAdapter Codex,
+        FakeReviewPlayer PcSpeech,
+        FakeReviewPlayer PhoneSpeech,
+        FakeApprovalListener PcApproval,
+        FakeApprovalListener PhoneApproval) CreatePhoneContext()
+    {
+        var claude = new RecordingAdapter("claude", "Claude", ready: true);
+        var codex = new RecordingAdapter("codex", "Codex", ready: true);
+        var registry = new DestinationRegistry(new IDestinationAdapter[] { claude, codex });
+
+        var hotkey = new MockHotkeyService();
+        var capture = new InMemoryAudioCapture();
+        var controller = new PushToTalkController(hotkey, capture);
+
+        var transcriber = new FakeTranscriber();
+        var cleaner = new FakeCleaner();
+        var pipeline = new VoicePipeline(transcriber, cleaner);
+
+        var pcSpeech = new FakeReviewPlayer();
+        var phoneSpeech = new FakeReviewPlayer();
+        var pcApproval = new FakeApprovalListener();
+        var phoneApproval = new FakeApprovalListener();
+
+        var widget = new WidgetViewModel(action => action());
+        widget.AttachController(controller);
+        widget.AttachDestinations(registry);
+        widget.AttachPipeline(pipeline);
+        widget.AttachSpeech(pcSpeech);
+        widget.AttachPhoneSpeech(phoneSpeech);
+        widget.AttachApprovalListener(pcApproval);
+        widget.AttachPhoneApprovalListener(phoneApproval);
+
+        controller.Start();
+
+        return (widget, claude, codex, pcSpeech, phoneSpeech, pcApproval, phoneApproval);
+    }
+
+    [Fact]
+    public async Task PhoneDraft_SpeaksOnPhoneOnly_AndAffirmativeApprovalSends()
+    {
+        var (widget, claude, _, pcSpeech, phoneSpeech, pcApproval, phoneApproval) = CreatePhoneContext();
+        using (widget)
+        {
+            phoneApproval.EnqueueApproval(MakeAudio("send"));
+
+            widget.LoadPhoneDraft("Claude write a test", "write a test", "timings 10ms", "claude");
+
+            Assert.NotNull(widget.SelectedDestination);
+            Assert.Equal("claude", widget.SelectedDestination.DestinationId);
+
+            await phoneSpeech.WaitUntilSpoken();
+            await Task.Delay(100);
+
+            Assert.Equal(0, pcSpeech.Calls);
+            Assert.True(phoneSpeech.Calls >= 1);
+
+            Assert.Equal(0, pcApproval.ListenApprovalCalls);
+            Assert.True(phoneApproval.ListenApprovalCalls >= 1);
+
+            Assert.Single(claude.Sent);
+            Assert.Equal("write a test", claude.Sent[0]);
+            Assert.Equal(WidgetState.Sent, widget.State);
+        }
+    }
+
+    [Fact]
+    public async Task PhoneDraft_DisconnectDuringApproval_SendsNothingAndReturnsToConfirm()
+    {
+        var (widget, claude, _, pcSpeech, phoneSpeech, _, phoneApproval) = CreatePhoneContext();
+        using (widget)
+        {
+            phoneApproval.EnqueueApproval(Array.Empty<byte>());
+
+            widget.LoadPhoneDraft("Claude test", "test", "timings", "claude");
+
+            await phoneSpeech.WaitUntilSpoken();
+            await Task.Delay(100);
+
+            Assert.Empty(claude.Sent);
+            Assert.Equal(WidgetState.Confirm, widget.State);
+            Assert.Equal("Review the draft, then confirm", widget.StatusLine);
+        }
+    }
+
     private sealed class FakeTranscriber : ISpeechTranscriber
     {
         public bool IsLoaded => true;

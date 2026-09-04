@@ -24,13 +24,17 @@ sealed interface PcEvent {
     data class Connected(val address: String) : PcEvent
     data class Disconnected(val reason: String) : PcEvent
     data class Status(val state: String, val line: String) : PcEvent
-    data class Draft(val raw: String, val clean: String, val timings: String) : PcEvent
+    data class Draft(val raw: String, val clean: String, val timings: String, val destinationId: String? = null) : PcEvent
     data class Destinations(val destinations: List<PcDestination>) : PcEvent
     data class SendOutcome(val ok: Boolean, val destination: String, val detail: String) : PcEvent
     data class Failure(val message: String) : PcEvent
     data class TtsAudio(val segment: TtsAudioSegment) : PcEvent
     data class Playback(val generation: Long, val state: String) : PcEvent
     data class Chime(val generation: Long) : PcEvent
+    data object StartApprovalCapture : PcEvent
+    data object StopApprovalCapture : PcEvent
+    data object StartRedictationCapture : PcEvent
+    data class DestinationSelected(val destinationId: String) : PcEvent
 }
 
 /**
@@ -126,7 +130,8 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                     PcEvent.Draft(
                         o.optString("raw"),
                         o.optString("clean"),
-                        o.optString("timings")
+                        o.optString("timings"),
+                        o.optString("destinationId").takeIf { it.isNotBlank() }
                     )
                 )
                 "destinations" -> {
@@ -156,6 +161,10 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                 "error" -> onEvent(PcEvent.Failure(o.optString("message")))
                 "playback" -> onEvent(PcEvent.Playback(o.optLong("generation"), o.optString("state")))
                 "chime" -> onEvent(PcEvent.Chime(o.optLong("generation")))
+                "startApprovalCapture" -> onEvent(PcEvent.StartApprovalCapture)
+                "stopApprovalCapture" -> onEvent(PcEvent.StopApprovalCapture)
+                "startRedictationCapture" -> onEvent(PcEvent.StartRedictationCapture)
+                "destinationSelected" -> onEvent(PcEvent.DestinationSelected(o.optString("destinationId")))
                 else -> Unit
             }
         } catch (e: Exception) {
@@ -166,6 +175,10 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
     fun startCapture() = sendJson(JSONObject().put("t", "startCapture"))
 
     fun stopCapture() = sendJson(JSONObject().put("t", "stopCapture"))
+
+    fun selectDestination(destinationId: String) = sendJson(
+        JSONObject().put("t", "selectDestination").put("destinationId", destinationId)
+    )
 
     fun refreshDestinations() = sendJson(JSONObject().put("t", "refreshDestinations"))
 

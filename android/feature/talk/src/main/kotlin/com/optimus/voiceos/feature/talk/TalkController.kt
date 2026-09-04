@@ -46,7 +46,10 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     fun setDraft(text: String) = update { it.copy(cleanedDraft = text, sendSummary = "") }
 
     /** Destination choice is always an explicit tap. Nothing is preselected. */
-    fun selectDestination(id: String) = update { it.copy(selectedDestinationId = id, error = "") }
+    fun selectDestination(id: String) {
+        update { it.copy(selectedDestinationId = id, error = "") }
+        client.selectDestination(id)
+    }
 
     fun refreshDestinations() = client.refreshDestinations()
 
@@ -157,6 +160,31 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         update { it.copy(capturing = false, status = "Sent to PC, waiting for draft...") }
     }
 
+    private fun startApprovalCapture() {
+        if (player.isActive) return
+        if (!client.isConnected) return
+        if (!mic.start()) {
+            update { it.copy(error = "Microphone unavailable") }
+            return
+        }
+        update { it.copy(capturing = true, error = "", status = "Listening for approval...") }
+    }
+
+    private fun stopApprovalCapture() {
+        mic.stop()
+        update { it.copy(capturing = false, status = "Processing approval...") }
+    }
+
+    private fun startRedictationCapture() {
+        if (player.isActive) return
+        if (!client.isConnected) return
+        if (!mic.start()) {
+            update { it.copy(error = "Microphone unavailable") }
+            return
+        }
+        update { it.copy(capturing = true, error = "", status = "Listening for new draft... speak now") }
+    }
+
     private fun handle(event: PcEvent) {
         when (event) {
             is PcEvent.Connected -> update {
@@ -194,10 +222,12 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             is PcEvent.SendOutcome -> update { it.withSendOutcome(event) }
 
             is PcEvent.Draft -> update {
+                val destId = event.destinationId ?: it.selectedDestinationId
                 it.copy(
                     rawTranscript = event.raw,
                     cleanedDraft = event.clean,
                     timings = event.timings,
+                    selectedDestinationId = destId,
                     status = "Draft ready"
                 )
             }
@@ -211,6 +241,10 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
                 "cancel" -> player.cancel(event.generation)
             }
             is PcEvent.Chime -> player.chime(event.generation)
+            is PcEvent.StartApprovalCapture -> startApprovalCapture()
+            is PcEvent.StopApprovalCapture -> stopApprovalCapture()
+            is PcEvent.StartRedictationCapture -> startRedictationCapture()
+            is PcEvent.DestinationSelected -> update { it.copy(selectedDestinationId = event.destinationId) }
         }
     }
 

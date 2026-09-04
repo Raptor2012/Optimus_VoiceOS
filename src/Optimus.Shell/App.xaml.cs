@@ -29,7 +29,9 @@ public partial class App : Application
     private PhoneEndpoint? _phoneEndpoint;
     private PhoneSession? _phoneSession;
     private SpokenReviewPlayer? _speech;
+    private PhoneSpokenReview? _phoneSpeech;
     private OneShotApprovalListener? _approvalListener;
+    private PhoneApprovalListener? _phoneApprovalListener;
     private PiperSpeechSynthesizer? _ttsSynthesizer;
     private AgentNarrationCoordinator? _narration;
 
@@ -136,7 +138,34 @@ public partial class App : Application
                 onSending: (text, destinationId, destinationName) => Dispatcher.Invoke(() =>
                     viewModel.BeginPhoneSend(text, destinationId, destinationName)),
                 onSendCompleted: (text, destinationName, result) => Dispatcher.Invoke(() =>
-                    viewModel.CompletePhoneSend(text, destinationName, result)));
+                    viewModel.CompletePhoneSend(text, destinationName, result)),
+                onDraftWithDestination: (raw, clean, timings, destId) => Dispatcher.Invoke(() =>
+                    viewModel.LoadPhoneDraft(raw, clean, timings, destId)),
+                onDestinationSelected: destId => Dispatcher.Invoke(() =>
+                {
+                    DestinationOption? match = viewModel.Destinations.FirstOrDefault(d =>
+                        string.Equals(d.DestinationId, destId, StringComparison.OrdinalIgnoreCase));
+                    if (match != null)
+                    {
+                        viewModel.SelectedDestination = match;
+                    }
+                }));
+
+            if (_ttsSynthesizer != null)
+            {
+                _phoneSpeech = new PhoneSpokenReview(_ttsSynthesizer, _phoneEndpoint);
+                _viewModel.AttachPhoneSpeech(_phoneSpeech);
+            }
+            _phoneApprovalListener = new PhoneApprovalListener(_phoneEndpoint);
+            _viewModel.AttachPhoneApprovalListener(_phoneApprovalListener);
+
+            _viewModel.SelectedDestinationChanged += (_, dest) =>
+            {
+                if (dest != null)
+                {
+                    _phoneEndpoint.SendSelectedDestination(dest.DestinationId);
+                }
+            };
 
             try
             {
@@ -205,7 +234,9 @@ public partial class App : Application
             _viewModel.AgentRunCancelled -= OnAgentRunCancelled;
         }
         _narration?.Dispose();
+        _phoneApprovalListener?.Dispose();
         _approvalListener?.Dispose();
+        _phoneSpeech?.Dispose();
         _speech?.Dispose();
         _ttsSynthesizer?.Dispose();
         _phoneSession?.Dispose();

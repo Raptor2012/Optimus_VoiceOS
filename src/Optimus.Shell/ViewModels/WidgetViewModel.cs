@@ -41,11 +41,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private string _lastSentText = string.Empty;
     private string _phoneStatus = string.Empty;
     private ISpokenReview? _speech;
+    private ISpokenReview? _phoneSpeech;
     private string _speechStatus = string.Empty;
     private bool _isSpeakingReview;
     private string _lastSpokenKey = string.Empty;
     private int _spokenReviewGeneration;
     private IApprovalListener? _approvalListener;
+    private IApprovalListener? _phoneApprovalListener;
     private VoiceDestinationResolver? _destinationResolver;
     private int _isSending;
     private string _lastApprovalStatus = string.Empty;
@@ -56,6 +58,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     public event EventHandler<AgentRunEventArgs>? AgentRunStarting;
     public event EventHandler? AgentRunCancelled;
+    public event EventHandler<DestinationOption?>? SelectedDestinationChanged;
 
     public WidgetState State
     {
@@ -110,6 +113,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
                 {
                     _approvalListener?.Cancel();
+                    _phoneApprovalListener?.Cancel();
                     State = WidgetState.Confirm;
                     _controller?.Start();
                     MaybeSpeakReview();
@@ -186,11 +190,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasSelectedDestination));
                 UpdateWindowChoices();
+                SelectedDestinationChanged?.Invoke(this, value);
 
                 // If destination changed during review or approval, reset to Confirm and reread
                 if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
                 {
                     _approvalListener?.Cancel();
+                    _phoneApprovalListener?.Cancel();
                     State = WidgetState.Confirm;
                     _controller?.Start();
                 }
@@ -457,9 +463,17 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void AttachSpeech(ISpokenReview speech) =>
         _speech = speech ?? throw new ArgumentNullException(nameof(speech));
 
+    /// <summary>Supplies the phone spoken-review player for phone-originated drafts.</summary>
+    public void AttachPhoneSpeech(ISpokenReview phoneSpeech) =>
+        _phoneSpeech = phoneSpeech ?? throw new ArgumentNullException(nameof(phoneSpeech));
+
     /// <summary>Supplies the one-shot approval listener for spoken review confirmations.</summary>
     public void AttachApprovalListener(IApprovalListener listener) =>
         _approvalListener = listener ?? throw new ArgumentNullException(nameof(listener));
+
+    /// <summary>Supplies the phone approval listener for phone-originated review confirmations.</summary>
+    public void AttachPhoneApprovalListener(IApprovalListener listener) =>
+        _phoneApprovalListener = listener ?? throw new ArgumentNullException(nameof(listener));
 
     /// <summary>Supplies the destination alias resolver for spoken routing prefixes.</summary>
     public void AttachDestinationResolver(VoiceDestinationResolver resolver) =>
@@ -522,7 +536,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     /// Shows a draft that came from the phone, using the same confirm flow as a desktop
     /// utterance so there is one gate, not two.
     /// </summary>
-    public void LoadPhoneDraft(string rawTranscript, string cleanedDraft, string timings)
+    public void LoadPhoneDraft(string rawTranscript, string cleanedDraft, string timings, string? destinationId = null)
     {
         BeginNewUtterance();
         _draftOriginPhone = true;
@@ -531,6 +545,15 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         StageTimings = timings;
         ErrorMessage = string.Empty;
         IsDraftEditable = true;
+        if (destinationId != null)
+        {
+            DestinationOption? matched = Destinations.FirstOrDefault(d =>
+                string.Equals(d.DestinationId, destinationId, StringComparison.OrdinalIgnoreCase));
+            if (matched != null)
+            {
+                SelectedDestination = matched;
+            }
+        }
         State = WidgetState.Confirm;
         StatusLine = "Phone draft — review, then confirm";
         MaybeSpeakReview();
@@ -596,7 +619,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         // Claims a new generation so an in-flight result cannot land after the cancel.
         BeginNewUtterance();
         _approvalListener?.Cancel();
+        _phoneApprovalListener?.Cancel();
         _speech?.Cancel();
+        _phoneSpeech?.Cancel();
         _lastSpokenKey = string.Empty;
         SpeechStatus = string.Empty;
         DraftText = string.Empty;
@@ -651,7 +676,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
             // An edit or destination change invalidates the spoken review. Read the exact current
             // pair before allowing either the button or the later voice-approval path to send it.
-            if (_speech != null)
+            ISpokenReview? activeSpeech = _draftOriginPhone ? _phoneSpeech : _speech;
+            if (activeSpeech != null)
             {
                 string currentSpokenKey = BuildSpokenKey(destination.DestinationId, draftSnapshot);
                 if (IsSpeakingReview || !string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
@@ -748,7 +774,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     /// </remarks>
     private void MaybeSpeakReview()
     {
-        ISpokenReview? speech = _speech;
+        ISpokenReview? speech = _draftOriginPhone ? _phoneSpeech : _speech;
+        if (_draftOriginPhone && speech == null)
+        {
+            SpeechStatus = "Phone voice unavailable: phone speech not configured.";
+            return;
+        }
+
         if (speech == null || State != WidgetState.Confirm)
         {
             return;
@@ -822,7 +854,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                     case SpokenReviewOutcome.Completed:
                         SpeechStatus = result.Timings?.Summary ?? "Review spoken.";
                         StatusLine = $"Send this to {destinationName}, or redictate?";
-                        if (_approvalListener != null)
+                        IApprovalListener? activeListener = _draftOriginPhone ? _phoneApprovalListener : _approvalListener;
+                        if (activeListener != null)
                         {
                             State = WidgetState.AwaitingApproval;
                             // Keep hotkey disabled during approval listening.
@@ -947,7 +980,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         Interlocked.Increment(ref _spokenReviewGeneration);
         _approvalListener?.Cancel();
+        _phoneApprovalListener?.Cancel();
         _speech?.Cancel();
+        _phoneSpeech?.Cancel();
         _lastSpokenKey = string.Empty;
         if (IsSpeakingReview)
         {
@@ -1120,7 +1155,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RunApprovalListeningLoopAsync(int utteranceGen, int reviewGen, DestinationOption destination)
     {
-        IApprovalListener? listener = _approvalListener;
+        IApprovalListener? listener = _draftOriginPhone ? _phoneApprovalListener : _approvalListener;
         if (listener == null)
         {
             return;
@@ -1263,7 +1298,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     private void StartRedictation()
     {
+        bool wasPhone = _draftOriginPhone;
         int generation = BeginNewUtterance();
+        _draftOriginPhone = wasPhone;
         CancellationToken token = _processingCts!.Token;
 
         State = WidgetState.Redictating;
@@ -1274,7 +1311,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         StatusLine = "Listening for new draft... speak now";
         _controller?.Stop();
 
-        IApprovalListener? listener = _approvalListener;
+        IApprovalListener? listener = _draftOriginPhone ? _phoneApprovalListener : _approvalListener;
         if (listener == null)
         {
             State = WidgetState.Idle;
@@ -1356,6 +1393,21 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         if (_approvalListener is IDisposable disposableListener)
         {
             disposableListener.Dispose();
+        }
+        _phoneApprovalListener?.Cancel();
+        if (_phoneApprovalListener is IDisposable disposablePhoneListener)
+        {
+            disposablePhoneListener.Dispose();
+        }
+        _speech?.Cancel();
+        if (_speech is IDisposable disposableSpeech)
+        {
+            disposableSpeech.Dispose();
+        }
+        _phoneSpeech?.Cancel();
+        if (_phoneSpeech is IDisposable disposablePhoneSpeech)
+        {
+            disposablePhoneSpeech.Dispose();
         }
         _processingCts?.Cancel();
         _processingCts?.Dispose();
