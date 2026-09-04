@@ -3,6 +3,7 @@ namespace Optimus.Shell.ViewModels;
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -377,6 +378,40 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = true;
         State = WidgetState.Confirm;
         StatusLine = "Phone draft — review, then confirm";
+    }
+
+    /// <summary>Mirrors a phone-confirmed draft into the widget's single send lifecycle.</summary>
+    public void BeginPhoneSend(string text, string destinationId, string destinationName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationId);
+
+        DraftText = text;
+        SelectedDestination = Destinations.FirstOrDefault(option =>
+            string.Equals(option.DestinationId, destinationId, StringComparison.Ordinal));
+        ErrorMessage = string.Empty;
+        IsDraftEditable = false;
+        State = WidgetState.Sending;
+        StatusLine = $"Sending to {destinationName} from phone...";
+    }
+
+    /// <summary>Applies the adapter's real outcome to the same draft shown on both devices.</summary>
+    public void CompletePhoneSend(string text, string destinationName, SendResult result)
+    {
+        IsDraftEditable = true;
+
+        if (result.Succeeded)
+        {
+            LastSentText = text;
+            ErrorMessage = string.Empty;
+            State = WidgetState.Sent;
+            StatusLine = $"Sent to {destinationName} ({result.ElapsedMilliseconds} ms)";
+            return;
+        }
+
+        ErrorMessage = result.Detail;
+        State = WidgetState.Error;
+        StatusLine = $"NOT sent to {destinationName}";
     }
 
     public void DismissError()

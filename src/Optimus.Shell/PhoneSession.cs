@@ -25,11 +25,15 @@ public sealed class PhoneSession : IDisposable
     private readonly DestinationRegistry? _destinations;
     private readonly Action<string, string, string>? _onDraft;
     private readonly Action<string>? _onStatus;
+    private readonly Action? _onCancel;
+    private readonly Action<string, string, string>? _onSending;
+    private readonly Action<string, string, SendResult>? _onSendCompleted;
     private readonly object _lock = new();
 
     private MemoryStream? _buffer;
     private CancellationTokenSource? _processingCts;
     private int _utteranceGeneration;
+    private int _sendInProgress;
     private bool _disposed;
 
     public PhoneSession(
@@ -37,13 +41,19 @@ public sealed class PhoneSession : IDisposable
         VoicePipeline? pipeline,
         DestinationRegistry? destinations = null,
         Action<string, string, string>? onDraft = null,
-        Action<string>? onStatus = null)
+        Action<string>? onStatus = null,
+        Action? onCancel = null,
+        Action<string, string, string>? onSending = null,
+        Action<string, string, SendResult>? onSendCompleted = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
         _destinations = destinations;
         _onDraft = onDraft;
         _onStatus = onStatus;
+        _onCancel = onCancel;
+        _onSending = onSending;
+        _onSendCompleted = onSendCompleted;
 
         _endpoint.ConnectionChanged += OnConnectionChanged;
         _endpoint.CaptureStarted += OnCaptureStarted;
@@ -79,7 +89,9 @@ public sealed class PhoneSession : IDisposable
     private void OnCancelRequested(object? sender, EventArgs e)
     {
         Interlocked.Increment(ref _utteranceGeneration);
+        Interlocked.Exchange(ref _sendInProgress, 0);
         _endpoint.SendStatus("idle", "Cancelled");
+        _onCancel?.Invoke();
         _onStatus?.Invoke("Phone cancelled the draft");
     }
 
@@ -114,7 +126,17 @@ public sealed class PhoneSession : IDisposable
             return;
         }
 
+        // A double tap or duplicate frame must not submit the same phone draft twice.
+        if (Interlocked.CompareExchange(ref _sendInProgress, 1, 0) != 0)
+        {
+            // Keep the phone in Sending; a false outcome here would make the original live send
+            // look failed and re-enable confirmation before its real result arrives.
+            _endpoint.SendStatus("sending", "A send is already in progress.");
+            return;
+        }
+
         _endpoint.SendStatus("sending", $"Sending to {adapter.DisplayName}...");
+        _onSending?.Invoke(e.Text, adapter.DestinationId, adapter.DisplayName);
         _onStatus?.Invoke($"Phone confirmed: sending to {adapter.DisplayName}");
 
         _ = Task.Run(async () =>
@@ -125,12 +147,19 @@ public sealed class PhoneSession : IDisposable
                 var confirmed = new ConfirmedDraft(e.Text, adapter.DestinationId);
                 result = await adapter.SendAsync(confirmed).ConfigureAwait(false);
             }
-            catch (ArgumentException ex)
+            catch (Exception ex)
             {
                 result = new SendResult(SendStatus.Failed, ex.Message, 0);
             }
 
+            // A failure remains retryable. Success stays consumed until a new capture starts.
+            if (!result.Succeeded)
+            {
+                Interlocked.Exchange(ref _sendInProgress, 0);
+            }
+
             // Sent is reported only when the adapter actually succeeded.
+            _onSendCompleted?.Invoke(e.Text, adapter.DisplayName, result);
             _endpoint.SendSendResult(result.Succeeded, adapter.DisplayName, result.Detail);
             _endpoint.SendStatus(result.Succeeded ? "sent" : "error", result.Detail);
             _onStatus?.Invoke(result.Succeeded
@@ -161,6 +190,7 @@ public sealed class PhoneSession : IDisposable
 
     private void OnCaptureStarted(object? sender, EventArgs e)
     {
+        Interlocked.Exchange(ref _sendInProgress, 0);
         lock (_lock)
         {
             _processingCts?.Cancel();

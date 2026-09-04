@@ -12,6 +12,8 @@ using Optimus.Core.Phone;
 using Optimus.Providers;
 using Optimus.Providers.Windows;
 using Optimus.Shell;
+using Optimus.Shell.Models;
+using Optimus.Shell.ViewModels;
 using Xunit;
 
 /// <summary>
@@ -63,6 +65,96 @@ public class PhoneConfirmTests : IDisposable
 
         Assert.Equal(new[] { edited }, codex.Sent);
         Assert.Empty(claude.Sent); // never the other destination
+    }
+
+    [Fact]
+    public async Task PhoneSend_UsesTheDesktopWidgetsSingleSendLifecycle()
+    {
+        var sendGate = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var claude = new RecordingAdapter("claude", "Claude", ready: true) { PendingResult = sendGate.Task };
+        var registry = new DestinationRegistry(new IDestinationAdapter[] { claude });
+        using var viewModel = new WidgetViewModel(action => action());
+        viewModel.AttachDestinations(registry);
+        viewModel.LoadPhoneDraft("raw", "clean draft", "timings");
+
+        using var session = new PhoneSession(
+            _endpoint,
+            pipeline: null,
+            destinations: registry,
+            onCancel: viewModel.Cancel,
+            onSending: viewModel.BeginPhoneSend,
+            onSendCompleted: viewModel.CompletePhoneSend);
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+        await DrainAsync(stream, 2);
+
+        await SendAsync(stream, "{\"t\":\"confirm\",\"destinationId\":\"claude\",\"text\":\"edited on phone\"}");
+        await WaitUntilAsync(() => viewModel.State == WidgetState.Sending);
+
+        Assert.Equal("edited on phone", viewModel.DraftText);
+        Assert.False(viewModel.IsDraftEditable);
+        await SendAsync(stream, "{\"t\":\"confirm\",\"destinationId\":\"claude\",\"text\":\"edited on phone\"}");
+        await viewModel.ConfirmAsync();
+        Assert.Single(claude.Sent);
+
+        sendGate.SetResult(new SendResult(SendStatus.Sent, "delivered", 12));
+        await WaitUntilAsync(() => viewModel.State == WidgetState.Sent);
+
+        Assert.Equal("edited on phone", viewModel.LastSentText);
+        Assert.False(viewModel.IsConfirmPanelVisible);
+        Assert.Single(claude.Sent);
+    }
+
+    [Fact]
+    public async Task PhoneSendFailure_RestoresTheSameDraftForRetryOnDesktop()
+    {
+        var claude = new RecordingAdapter("claude", "Claude", ready: true) { Succeeds = false };
+        var registry = new DestinationRegistry(new IDestinationAdapter[] { claude });
+        using var viewModel = new WidgetViewModel(action => action());
+        viewModel.AttachDestinations(registry);
+        viewModel.LoadPhoneDraft("raw", "clean", "timings");
+        using var session = new PhoneSession(
+            _endpoint,
+            pipeline: null,
+            destinations: registry,
+            onSending: viewModel.BeginPhoneSend,
+            onSendCompleted: viewModel.CompletePhoneSend);
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+        await DrainAsync(stream, 2);
+
+        await SendAsync(stream, "{\"t\":\"confirm\",\"destinationId\":\"claude\",\"text\":\"retry me\"}");
+        await WaitUntilAsync(() => viewModel.State == WidgetState.Error);
+
+        Assert.Equal("retry me", viewModel.DraftText);
+        Assert.True(viewModel.IsDraftEditable);
+        Assert.True(viewModel.IsConfirmPanelVisible);
+        Assert.Equal("focus failed", viewModel.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task PhoneCancel_ClearsTheDesktopDraft()
+    {
+        var registry = new DestinationRegistry(new IDestinationAdapter[]
+        {
+            new RecordingAdapter("claude", "Claude", ready: true)
+        });
+        using var viewModel = new WidgetViewModel(action => action());
+        viewModel.LoadPhoneDraft("raw", "draft", "timings");
+        using var session = new PhoneSession(
+            _endpoint,
+            pipeline: null,
+            destinations: registry,
+            onCancel: viewModel.Cancel);
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+        await DrainAsync(stream, 2);
+
+        await SendAsync(stream, "{\"t\":\"cancel\"}");
+        await WaitUntilAsync(() => viewModel.State == WidgetState.Idle);
+
+        Assert.False(viewModel.HasDraft);
+        Assert.False(viewModel.IsConfirmPanelVisible);
     }
 
     /// <summary>Nothing is sent without a confirm message.</summary>
@@ -263,6 +355,8 @@ public class PhoneConfirmTests : IDisposable
 
         public bool Succeeds { get; init; } = true;
 
+        public Task<SendResult>? PendingResult { get; init; }
+
         public List<string> Sent { get; } = new();
 
         public DestinationStatus Probe() => new(
@@ -279,11 +373,11 @@ public class PhoneConfirmTests : IDisposable
         {
         }
 
-        public Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default)
+        public async Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default)
         {
             if (!Succeeds)
             {
-                return Task.FromResult(new SendResult(SendStatus.FocusFailed, "focus failed", 1));
+                return new SendResult(SendStatus.FocusFailed, "focus failed", 1);
             }
 
             lock (Sent)
@@ -291,7 +385,12 @@ public class PhoneConfirmTests : IDisposable
                 Sent.Add(draft.Text);
             }
 
-            return Task.FromResult(new SendResult(SendStatus.Sent, "delivered", 1));
+            if (PendingResult != null)
+            {
+                return await PendingResult.WaitAsync(cancellationToken);
+            }
+
+            return new SendResult(SendStatus.Sent, "delivered", 1);
         }
     }
 }

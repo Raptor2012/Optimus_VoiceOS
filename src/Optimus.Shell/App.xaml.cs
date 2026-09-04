@@ -94,7 +94,12 @@ public partial class App : Application
                 _destinations,
                 onDraft: (raw, clean, timings) => Dispatcher.Invoke(() =>
                     viewModel.LoadPhoneDraft(raw, clean, timings)),
-                onStatus: line => Dispatcher.Invoke(() => viewModel.PhoneStatus = line));
+                onStatus: line => Dispatcher.Invoke(() => viewModel.PhoneStatus = line),
+                onCancel: () => Dispatcher.Invoke(viewModel.Cancel),
+                onSending: (text, destinationId, destinationName) => Dispatcher.Invoke(() =>
+                    viewModel.BeginPhoneSend(text, destinationId, destinationName)),
+                onSendCompleted: (text, destinationName, result) => Dispatcher.Invoke(() =>
+                    viewModel.CompletePhoneSend(text, destinationName, result)));
 
             try
             {

@@ -115,13 +115,9 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         }
 
         update {
-            it.copy(
+            it.forNewCapture().copy(
                 capturing = true,
                 error = "",
-                rawTranscript = "",
-                cleanedDraft = "",
-                timings = "",
-                sendSummary = "",
                 status = "Recording..."
             )
         }
@@ -169,18 +165,7 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
                 current.copy(destinations = event.destinations, selectedDestinationId = stillThere)
             }
 
-            is PcEvent.SendOutcome -> update {
-                it.copy(
-                    sending = false,
-                    sendSummary = if (event.ok) {
-                        "Sent to " + event.destination
-                    } else {
-                        "NOT sent to " + event.destination + ": " + event.detail
-                    },
-                    error = if (event.ok) "" else event.detail,
-                    status = if (event.ok) "Sent" else "Not sent"
-                )
-            }
+            is PcEvent.SendOutcome -> update { it.withSendOutcome(event) }
 
             is PcEvent.Draft -> update {
                 it.copy(
@@ -205,3 +190,28 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         client.disconnect()
     }
 }
+
+/** A new utterance can never inherit the previous prompt's destination choice. */
+internal fun TalkUiState.forNewCapture(): TalkUiState = copy(
+    rawTranscript = "",
+    cleanedDraft = "",
+    timings = "",
+    sendSummary = "",
+    selectedDestinationId = null
+)
+
+/** Success consumes the draft; failure keeps the exact text and destination available to retry. */
+internal fun TalkUiState.withSendOutcome(event: PcEvent.SendOutcome): TalkUiState = copy(
+    sending = false,
+    rawTranscript = if (event.ok) "" else rawTranscript,
+    cleanedDraft = if (event.ok) "" else cleanedDraft,
+    timings = if (event.ok) "" else timings,
+    selectedDestinationId = if (event.ok) null else selectedDestinationId,
+    sendSummary = if (event.ok) {
+        "Sent to " + event.destination
+    } else {
+        "NOT sent to " + event.destination + ": " + event.detail
+    },
+    error = if (event.ok) "" else event.detail,
+    status = if (event.ok) "Sent" else "Not sent"
+)
