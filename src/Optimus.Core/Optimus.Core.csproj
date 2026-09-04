@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Optimus.Contracts\Optimus.Contracts.csproj" />
+    <ProjectReference Include="..\Optimus.Inference\Optimus.Inference.csproj" />
+    <ProjectReference Include="..\Optimus.Providers\Optimus.Providers.csproj" />
+  </ItemGroup>
+</Project>
