@@ -87,7 +87,7 @@ Manually verify every referenced path and cross-document link. Record all checks
 ## Evidence
 
 - Base commit: `fdca807` (`chore: establish multi-model project workflow`)
-- Commit: recorded in the follow-up commit on this branch, `T001: record evidence commit hash`. The deliverables commit is the parent of that commit and is the commit Sol should review together with it.
+- Commit: `27d065c` — `T001: architecture foundation, protocol and security specs, and T002 contract`. This commit contains every deliverable. The only later commit on this branch is the one that writes this hash into the evidence, so Sol should review the branch head against the base.
 
 ### Deliverables produced
 
