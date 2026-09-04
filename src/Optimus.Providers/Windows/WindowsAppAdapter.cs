@@ -152,6 +152,18 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
         }
     }
 
+    /// <summary>Observes visible text from the exact window currently bound by the user.</summary>
+    public AgentWindowObserver CreateObserver()
+    {
+        WindowCandidate? bound = BoundWindow;
+        if (bound == null || !WindowFinder.IsStillValid(bound))
+        {
+            throw new InvalidOperationException($"{DisplayName} is not bound to a live window.");
+        }
+
+        return new AgentWindowObserver(bound);
+    }
+
     public async Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(draft);
