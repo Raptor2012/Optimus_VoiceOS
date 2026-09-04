@@ -206,6 +206,7 @@ public class UtteranceGenerationTests
 
 #pragma warning disable CS0067 // Required by IAudioCaptureService; this fake never raises it.
         public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
+        public event EventHandler<AudioChunkEventArgs>? AudioChunkAvailable;
 #pragma warning restore CS0067
 
         public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;

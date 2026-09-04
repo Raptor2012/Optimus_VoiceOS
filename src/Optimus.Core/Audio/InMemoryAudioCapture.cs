@@ -31,6 +31,7 @@ public sealed class InMemoryAudioCapture : IAudioCaptureService
 
     public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
+    public event EventHandler<AudioChunkEventArgs>? AudioChunkAvailable;
 
     public void StartCapture()
     {
@@ -53,6 +54,7 @@ public sealed class InMemoryAudioCapture : IAudioCaptureService
 
     public void AppendSyntheticAudio(int sampleCount, float frequencyHz = 440f)
     {
+        byte[] bytes;
         lock (_lock)
         {
             if (!_isCapturing)
@@ -61,7 +63,7 @@ public sealed class InMemoryAudioCapture : IAudioCaptureService
             }
 
             const int sampleRate = 16000;
-            byte[] bytes = new byte[sampleCount * sizeof(short)];
+            bytes = new byte[sampleCount * sizeof(short)];
             for (int i = 0; i < sampleCount; i++)
             {
                 double t = (double)i / sampleRate;
@@ -72,6 +74,23 @@ public sealed class InMemoryAudioCapture : IAudioCaptureService
 
             _buffer.Write(bytes, 0, bytes.Length);
         }
+
+        AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(bytes, 0.49f));
+    }
+
+    public void AppendAudio(byte[] bytes)
+    {
+        lock (_lock)
+        {
+            if (!_isCapturing)
+            {
+                return;
+            }
+
+            _buffer.Write(bytes, 0, bytes.Length);
+        }
+
+        AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(bytes, 0.5f));
     }
 
     public byte[] StopCapture()

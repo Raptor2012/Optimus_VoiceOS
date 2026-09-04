@@ -26,6 +26,18 @@ public class CaptureErrorEventArgs : EventArgs
     }
 }
 
+public class AudioChunkEventArgs : EventArgs
+{
+    public ReadOnlyMemory<byte> Buffer { get; }
+    public float PeakAmplitude { get; }
+
+    public AudioChunkEventArgs(ReadOnlyMemory<byte> buffer, float peakAmplitude)
+    {
+        Buffer = buffer;
+        PeakAmplitude = peakAmplitude;
+    }
+}
+
 public interface IAudioCaptureService : IDisposable
 {
     bool IsCapturing { get; }
@@ -33,4 +45,5 @@ public interface IAudioCaptureService : IDisposable
     byte[] StopCapture();
     event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
+    event EventHandler<AudioChunkEventArgs>? AudioChunkAvailable;
 }

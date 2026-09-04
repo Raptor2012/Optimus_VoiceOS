@@ -9,6 +9,7 @@ using Optimus.Core.Hotkeys;
 using Optimus.Core.Phone;
 using Optimus.Core.Narration;
 using Optimus.Core.Speech;
+using Optimus.Core.Voice;
 using Optimus.Inference;
 using Optimus.Providers;
 using Optimus.Shell.ViewModels;
@@ -28,6 +29,7 @@ public partial class App : Application
     private PhoneEndpoint? _phoneEndpoint;
     private PhoneSession? _phoneSession;
     private SpokenReviewPlayer? _speech;
+    private OneShotApprovalListener? _approvalListener;
     private PiperSpeechSynthesizer? _ttsSynthesizer;
     private AgentNarrationCoordinator? _narration;
 
@@ -50,6 +52,9 @@ public partial class App : Application
         _controller = new PushToTalkController(_hotkeyService, _audioCaptureService);
         _viewModel = new WidgetViewModel();
         _viewModel.AttachController(_controller);
+
+        _approvalListener = new OneShotApprovalListener(_audioCaptureService);
+        _viewModel.AttachApprovalListener(_approvalListener);
 
         // The three configured Windows targets. Nothing is selected by default; the user picks.
         _destinations = new DestinationRegistry();
@@ -200,6 +205,7 @@ public partial class App : Application
             _viewModel.AgentRunCancelled -= OnAgentRunCancelled;
         }
         _narration?.Dispose();
+        _approvalListener?.Dispose();
         _speech?.Dispose();
         _ttsSynthesizer?.Dispose();
         _phoneSession?.Dispose();

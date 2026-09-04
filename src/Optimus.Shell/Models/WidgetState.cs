@@ -8,5 +8,8 @@ public enum WidgetState
     Confirm,
     Sending,
     Sent,
-    Error
+    Error,
+    ReadingDraft,
+    AwaitingApproval,
+    Redictating
 }

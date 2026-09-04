@@ -1,8 +1,10 @@
 namespace Optimus.Shell.ViewModels;
 
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -12,6 +14,7 @@ using System.Windows.Input;
 using Optimus.Core.Audio;
 using Optimus.Core.Narration;
 using Optimus.Core.Speech;
+using Optimus.Core.Voice;
 using Optimus.Inference;
 using Optimus.Providers;
 using Optimus.Providers.Windows;
@@ -42,6 +45,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private bool _isSpeakingReview;
     private string _lastSpokenKey = string.Empty;
     private int _spokenReviewGeneration;
+    private IApprovalListener? _approvalListener;
+    private VoiceDestinationResolver? _destinationResolver;
+    private int _isSending;
+    private string _lastApprovalStatus = string.Empty;
     private bool _draftOriginPhone;
     private NarrationMode _narrationMode = NarrationMode.Concise;
     private bool _narrateToolsAndSkills;
@@ -61,6 +68,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(IsListening));
                 OnPropertyChanged(nameof(IsConfirming));
+                OnPropertyChanged(nameof(IsReadingDraft));
+                OnPropertyChanged(nameof(IsAwaitingApproval));
+                OnPropertyChanged(nameof(IsRedictating));
                 OnPropertyChanged(nameof(IsError));
                 OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(StatusBadgeColor));
@@ -95,6 +105,15 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(HasDraft));
                 OnPropertyChanged(nameof(IsDraftVisible));
                 OnPropertyChanged(nameof(IsConfirmPanelVisible));
+
+                // If modified while awaiting approval or reading, invalidate approval and reread
+                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
+                {
+                    _approvalListener?.Cancel();
+                    State = WidgetState.Confirm;
+                    _controller?.Start();
+                    MaybeSpeakReview();
+                }
             }
         }
     }
@@ -137,11 +156,11 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     /// <summary>Keeps the confirmed text visible while sending and after a recoverable failure.</summary>
     public bool IsDraftVisible =>
-        HasDraft && State is WidgetState.Confirm or WidgetState.Sending or WidgetState.Error;
+        HasDraft && State is WidgetState.Confirm or WidgetState.Sending or WidgetState.Error or WidgetState.ReadingDraft or WidgetState.AwaitingApproval or WidgetState.Redictating;
 
     /// <summary>A failed send remains retryable without another recording.</summary>
     public bool IsConfirmPanelVisible =>
-        HasDraft && State is WidgetState.Confirm or WidgetState.Error;
+        HasDraft && State is WidgetState.Confirm or WidgetState.Error or WidgetState.ReadingDraft or WidgetState.AwaitingApproval;
 
     /// <summary>The three configured destinations. Selection is always manual.</summary>
     public ObservableCollection<DestinationOption> Destinations { get; } = new();
@@ -167,6 +186,14 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasSelectedDestination));
                 UpdateWindowChoices();
+
+                // If destination changed during review or approval, reset to Confirm and reread
+                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
+                {
+                    _approvalListener?.Cancel();
+                    State = WidgetState.Confirm;
+                    _controller?.Start();
+                }
 
                 // A draft may already be waiting for a destination before it can be read out.
                 MaybeSpeakReview();
@@ -338,9 +365,25 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool IsListening => State == WidgetState.Listening;
-    public bool IsConfirming => State == WidgetState.Confirm;
+    public bool IsConfirming => State is WidgetState.Confirm or WidgetState.AwaitingApproval;
+    public bool IsReadingDraft => State == WidgetState.ReadingDraft;
+    public bool IsAwaitingApproval => State == WidgetState.AwaitingApproval;
+    public bool IsRedictating => State == WidgetState.Redictating;
     public bool IsError => State == WidgetState.Error;
     public bool IsIdle => State == WidgetState.Idle;
+
+    public string LastApprovalStatus
+    {
+        get => _lastApprovalStatus;
+        private set
+        {
+            if (_lastApprovalStatus != value)
+            {
+                _lastApprovalStatus = value;
+                OnPropertyChanged();
+            }
+        }
+    }
 
     public string StatusBadgeColor => State switch
     {
@@ -350,6 +393,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         WidgetState.Sending => "#5E5CE6", // Purple
         WidgetState.Sent => "#30D158", // Green
         WidgetState.Error => "#FF453A", // Red
+        WidgetState.ReadingDraft => "#BF5AF2", // Purple reading draft
+        WidgetState.AwaitingApproval => "#0A84FF", // Blue awaiting approval
+        WidgetState.Redictating => "#FF3B30", // Red redictating
         _ => "#30D158" // Green ready
     };
 
@@ -411,6 +457,14 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void AttachSpeech(ISpokenReview speech) =>
         _speech = speech ?? throw new ArgumentNullException(nameof(speech));
 
+    /// <summary>Supplies the one-shot approval listener for spoken review confirmations.</summary>
+    public void AttachApprovalListener(IApprovalListener listener) =>
+        _approvalListener = listener ?? throw new ArgumentNullException(nameof(listener));
+
+    /// <summary>Supplies the destination alias resolver for spoken routing prefixes.</summary>
+    public void AttachDestinationResolver(VoiceDestinationResolver resolver) =>
+        _destinationResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+
     /// <summary>Reports voice warmup, or why the voice is unavailable.</summary>
     public void SetSpeechReady(string status) => SpeechStatus = status;
 
@@ -420,9 +474,20 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         ArgumentNullException.ThrowIfNull(registry);
 
         Destinations.Clear();
+        var aliases = new List<VoiceDestinationAlias>();
         foreach ((IDestinationAdapter adapter, DestinationStatus status) in registry.ProbeAll())
         {
             Destinations.Add(new DestinationOption(adapter, status));
+            aliases.Add(new VoiceDestinationAlias(adapter.DestinationId, adapter.DisplayName));
+            if (!string.Equals(adapter.DestinationId, adapter.DisplayName, StringComparison.OrdinalIgnoreCase))
+            {
+                aliases.Add(new VoiceDestinationAlias(adapter.DestinationId, adapter.DestinationId));
+            }
+        }
+
+        if (_destinationResolver == null && aliases.Count > 0)
+        {
+            _destinationResolver = new VoiceDestinationResolver(aliases);
         }
 
         // Deliberately leaves SelectedDestination null: the user picks, always.
@@ -486,7 +551,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         StatusLine = $"Sending to {destinationName} from phone...";
         if (SelectedDestination != null)
         {
-            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(SelectedDestination.Adapter, speakOnPhone: true, text));
+            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(SelectedDestination.Adapter, true, text));
         }
     }
 
@@ -499,8 +564,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             LastSentText = text;
             ErrorMessage = string.Empty;
-            StatusLine = $"Sent to {destinationName} ({result.ElapsedMilliseconds} ms)";
             State = WidgetState.Sent;
+            StatusLine = $"Sent to {destinationName} ({result.ElapsedMilliseconds} ms)";
             return;
         }
 
@@ -530,7 +595,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     {
         // Claims a new generation so an in-flight result cannot land after the cancel.
         BeginNewUtterance();
-        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
+        _approvalListener?.Cancel();
         _speech?.Cancel();
         _lastSpokenKey = string.Empty;
         SpeechStatus = string.Empty;
@@ -540,6 +605,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         ErrorMessage = string.Empty;
         State = WidgetState.Idle;
         StatusLine = $"Cancelled — Hold {HotkeyLabel} to speak";
+        _controller?.Start();
     }
 
     /// <summary>
@@ -556,97 +622,112 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task ConfirmAsync()
     {
-        if (State == WidgetState.Sending)
+        if (Interlocked.CompareExchange(ref _isSending, 1, 0) != 0)
         {
             return;
         }
 
-        string draftSnapshot = DraftText;
-        DestinationOption? destination = SelectedDestination;
-
-        if (string.IsNullOrWhiteSpace(draftSnapshot))
+        try
         {
-            StatusLine = "Nothing to send.";
-            return;
-        }
-
-        if (destination == null)
-        {
-            StatusLine = "Choose a destination first.";
-            return;
-        }
-
-        // An edit or destination change invalidates the spoken review. Read the exact current
-        // pair before allowing either the button or the later voice-approval path to send it.
-        if (_speech != null)
-        {
-            string currentSpokenKey = BuildSpokenKey(destination.DestinationId, draftSnapshot);
-            if (IsSpeakingReview || !string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
+            if (State == WidgetState.Sending || State == WidgetState.Sent)
             {
-                MaybeSpeakReview();
-                StatusLine = IsSpeakingReview
-                    ? "Wait for the spoken review to finish."
-                    : "The changed draft must be read aloud before sending.";
                 return;
             }
-        }
 
-        // Re-probe now: the picker's status may be seconds old.
-        destination.Status = destination.Adapter.Probe();
-        if (!destination.Status.CanSend)
-        {
+            string draftSnapshot = DraftText;
+            DestinationOption? destination = SelectedDestination;
+
+            if (string.IsNullOrWhiteSpace(draftSnapshot))
+            {
+                StatusLine = "Nothing to send.";
+                return;
+            }
+
+            if (destination == null)
+            {
+                StatusLine = "Choose a destination first.";
+                return;
+            }
+
+            // An edit or destination change invalidates the spoken review. Read the exact current
+            // pair before allowing either the button or the later voice-approval path to send it.
+            if (_speech != null)
+            {
+                string currentSpokenKey = BuildSpokenKey(destination.DestinationId, draftSnapshot);
+                if (IsSpeakingReview || !string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
+                {
+                    MaybeSpeakReview();
+                    StatusLine = IsSpeakingReview
+                        ? "Wait for the spoken review to finish."
+                        : "The changed draft must be read aloud before sending.";
+                    return;
+                }
+            }
+
+            // Re-probe now: the picker's status may be seconds old.
+            destination.Status = destination.Adapter.Probe();
+            if (!destination.Status.CanSend)
+            {
+                State = WidgetState.Error;
+                ErrorMessage = destination.Status.Detail;
+                StatusLine = $"Not sent — {destination.DisplayName} is not ready";
+                _controller?.Start();
+                return;
+            }
+
+            ConfirmedDraft confirmed;
+            try
+            {
+                confirmed = new ConfirmedDraft(draftSnapshot, destination.DestinationId);
+            }
+            catch (ArgumentException ex)
+            {
+                State = WidgetState.Error;
+                ErrorMessage = ex.Message;
+                _controller?.Start();
+                return;
+            }
+
+            State = WidgetState.Sending;
+            IsDraftEditable = false;
+            StatusLine = $"Sending to {destination.DisplayName}...";
+            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
+
+            SendResult result;
+            try
+            {
+                result = await destination.Adapter.SendAsync(confirmed).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                result = new SendResult(SendStatus.Failed, ex.Message, 0);
+            }
+            finally
+            {
+                IsDraftEditable = true;
+            }
+
+            if (result.Succeeded)
+            {
+                State = WidgetState.Sent;
+                StatusLine = $"Sent to {destination.DisplayName} ({result.ElapsedMilliseconds} ms)";
+                LastSentText = confirmed.Text;
+                ErrorMessage = string.Empty;
+                _controller?.Start();
+                return;
+            }
+
+            // Not sent. Leave the draft exactly as it was so the user can retry or fix the target.
+            AgentRunCancelled?.Invoke(this, EventArgs.Empty);
             State = WidgetState.Error;
-            ErrorMessage = destination.Status.Detail;
-            StatusLine = $"Not sent — {destination.DisplayName} is not ready";
-            return;
-        }
-
-        ConfirmedDraft confirmed;
-        try
-        {
-            confirmed = new ConfirmedDraft(draftSnapshot, destination.DestinationId);
-        }
-        catch (ArgumentException ex)
-        {
-            State = WidgetState.Error;
-            ErrorMessage = ex.Message;
-            return;
-        }
-
-        State = WidgetState.Sending;
-        IsDraftEditable = false;
-        StatusLine = $"Sending to {destination.DisplayName}...";
-        AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
-
-        SendResult result;
-        try
-        {
-            result = await destination.Adapter.SendAsync(confirmed).ConfigureAwait(true);
-        }
-        catch (Exception ex)
-        {
-            result = new SendResult(SendStatus.Failed, ex.Message, 0);
+            ErrorMessage = result.Detail;
+            StatusLine = $"NOT sent to {destination.DisplayName}";
+            _controller?.Start();
         }
         finally
         {
-            IsDraftEditable = true;
+            Interlocked.Exchange(ref _isSending, 0);
         }
-
-        if (result.Succeeded)
-        {
-            State = WidgetState.Sent;
-            StatusLine = $"Sent to {destination.DisplayName} ({result.ElapsedMilliseconds} ms)";
-            LastSentText = confirmed.Text;
-            ErrorMessage = string.Empty;
-            return;
-        }
-
-        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
-
-        // Not sent. Leave the draft exactly as it was so the user can retry or fix the target.
-        State = WidgetState.Error;
-        ErrorMessage = result.Detail;
-        StatusLine = $"NOT sent to {destination.DisplayName}";
     }
 
     /// <summary>
@@ -701,6 +782,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         int generation = Volatile.Read(ref _utteranceGeneration);
         int reviewGeneration = Interlocked.Increment(ref _spokenReviewGeneration);
 
+        State = WidgetState.ReadingDraft;
         IsSpeakingReview = true;
         SpeechStatus = "Reading the draft aloud...";
         _controller?.Stop();
@@ -728,12 +810,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
                 IsSpeakingReview = false;
 
-                // Capture reopens only after the speaker is genuinely silent.
-                _controller?.Start();
-
                 // A newer utterance started while this was reading; its own review owns the UI.
                 if (!IsCurrent(generation))
                 {
+                    _controller?.Start();
                     return;
                 }
 
@@ -741,19 +821,32 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 {
                     case SpokenReviewOutcome.Completed:
                         SpeechStatus = result.Timings?.Summary ?? "Review spoken.";
-                        // Approval listening may begin. Nothing is sent here; the user still
-                        // confirms, by voice in a later slice or with the buttons now.
                         StatusLine = $"Send this to {destinationName}, or redictate?";
+                        if (_approvalListener != null)
+                        {
+                            State = WidgetState.AwaitingApproval;
+                            // Keep hotkey disabled during approval listening.
+                            _ = RunApprovalListeningLoopAsync(generation, reviewGeneration, destination);
+                        }
+                        else
+                        {
+                            State = WidgetState.Confirm;
+                            _controller?.Start();
+                        }
                         break;
 
                     case SpokenReviewOutcome.Cancelled:
                         SpeechStatus = "Reading cancelled.";
+                        State = WidgetState.Confirm;
+                        _controller?.Start();
                         break;
 
                     default:
                         // Speech is a convenience; losing it must not block the send path.
                         SpeechStatus = $"Voice unavailable: {result.FailureDetail}";
                         StatusLine = "Review the draft, then confirm";
+                        State = WidgetState.Confirm;
+                        _controller?.Start();
                         break;
                 }
             });
@@ -853,6 +946,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     {
         AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         Interlocked.Increment(ref _spokenReviewGeneration);
+        _approvalListener?.Cancel();
         _speech?.Cancel();
         _lastSpokenKey = string.Empty;
         if (IsSpeakingReview)
@@ -879,11 +973,11 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 BeginNewUtterance();
                 State = WidgetState.Idle;
                 StatusLine = $"Ready — Hold {HotkeyLabel} to speak";
+                _controller?.Start();
             });
             return;
         }
 
-        // 16 kHz mono PCM16 is 32,000 bytes per second.
         double seconds = audioBytes.Length / 32000.0;
 
         if (_pipeline == null)
@@ -893,6 +987,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 BeginNewUtterance();
                 State = WidgetState.Idle;
                 StatusLine = $"Captured {seconds:F1}s ({audioBytes.Length / 1024.0:F1} KB in memory) — Ready";
+                _controller?.Start();
             });
             return;
         }
@@ -905,7 +1000,18 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             generation = BeginNewUtterance();
             _draftOriginPhone = false;
             token = _processingCts!.Token;
+        });
 
+        ProcessAudioBytes(audioBytes, generation, token);
+    }
+
+    private void ProcessAudioBytes(byte[] audioBytes, int generation, CancellationToken token)
+    {
+        double seconds = audioBytes.Length / 32000.0;
+
+        _dispatchAction(() =>
+        {
+            if (!IsCurrent(generation)) return;
             State = WidgetState.Processing;
             RawTranscript = string.Empty;
             DraftText = string.Empty;
@@ -917,53 +1023,313 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             try
             {
-                VoicePipelineResult result = await _pipeline.ProcessAsync(audioBytes, token).ConfigureAwait(false);
+                var totalStopwatch = Stopwatch.StartNew();
+
+                TranscriptionResult transcription = _pipeline!.TranscribeOnly(audioBytes, token);
+
+                if (string.IsNullOrWhiteSpace(transcription.Text))
+                {
+                    _dispatchAction(() =>
+                    {
+                        if (!IsCurrent(generation)) return;
+                        State = WidgetState.Idle;
+                        StatusLine = $"No speech detected — Hold {HotkeyLabel} to speak";
+                        _controller?.Start();
+                    });
+                    return;
+                }
+
+                string textToClean = transcription.Text;
+
+                // Destination voice prefix stripping and routing
+                VoiceDestinationResolver? resolver = _destinationResolver;
+                if (resolver != null)
+                {
+                    VoiceDestinationResolution resolution = resolver.Resolve(transcription.Text);
+                    if (resolution.Status == VoiceDestinationResolutionStatus.Resolved && resolution.DestinationId != null)
+                    {
+                        _dispatchAction(() =>
+                        {
+                            DestinationOption? matched = Destinations.FirstOrDefault(d =>
+                                string.Equals(d.DestinationId, resolution.DestinationId, StringComparison.OrdinalIgnoreCase));
+                            if (matched != null)
+                            {
+                                SelectedDestination = matched;
+                            }
+                        });
+                    }
+                    textToClean = resolution.PromptText;
+                }
+
+                token.ThrowIfCancellationRequested();
+
+                CleanupResult cleanup;
+                if (!string.IsNullOrWhiteSpace(textToClean))
+                {
+                    try
+                    {
+                        cleanup = await _pipeline.Cleaner.CleanAsync(textToClean, token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        cleanup = new CleanupResult(textToClean, 0, false, ex.Message);
+                    }
+                }
+                else
+                {
+                    cleanup = new CleanupResult(string.Empty, 0, false, "Empty prompt");
+                }
+
+                totalStopwatch.Stop();
 
                 _dispatchAction(() =>
                 {
-                    // A newer recording (or a cancel) started while this one was decoding.
-                    if (!IsCurrent(generation))
-                    {
-                        return;
-                    }
+                    if (!IsCurrent(generation)) return;
 
-                    if (string.IsNullOrWhiteSpace(result.RawTranscript))
-                    {
-                        State = WidgetState.Idle;
-                        StatusLine = $"No speech detected — Hold {HotkeyLabel} to speak";
-                        return;
-                    }
-
-                    RawTranscript = result.RawTranscript;
-                    DraftText = result.CleanedDraft;
-                    StageTimings = result.TimingSummary;
+                    RawTranscript = transcription.Text;
+                    DraftText = cleanup.Text;
+                    StageTimings = $"audio {seconds:F1}s · STT {transcription.ElapsedMilliseconds} ms · cleanup {cleanup.ElapsedMilliseconds} ms · total {totalStopwatch.ElapsedMilliseconds} ms";
                     State = WidgetState.Confirm;
-                    StatusLine = result.CleanupApplied
+                    StatusLine = cleanup.Applied
                         ? "Review the draft, then confirm"
-                        : $"Cleanup unavailable ({result.CleanupUnavailableReason}) — showing raw transcript";
+                        : $"Cleanup unavailable ({cleanup.UnavailableReason}) — showing raw transcript";
                     MaybeSpeakReview();
                 });
             }
             catch (OperationCanceledException)
             {
-                // Cancel() already reset the widget.
+                // Cancelled
             }
             catch (Exception ex)
             {
                 _dispatchAction(() =>
                 {
-                    // A superseded utterance must not raise an error over the live one.
-                    if (!IsCurrent(generation))
-                    {
-                        return;
-                    }
-
+                    if (!IsCurrent(generation)) return;
                     ErrorMessage = ex.Message;
                     State = WidgetState.Error;
                     StatusLine = "Processing failed";
+                    _controller?.Start();
                 });
             }
         }, token);
+    }
+
+    private async Task RunApprovalListeningLoopAsync(int utteranceGen, int reviewGen, DestinationOption destination)
+    {
+        IApprovalListener? listener = _approvalListener;
+        if (listener == null)
+        {
+            return;
+        }
+
+        const int maxAttempts = 3;
+        int attempt = 0;
+
+        while (attempt < maxAttempts)
+        {
+            if (!IsCurrent(utteranceGen) ||
+                Volatile.Read(ref _spokenReviewGeneration) != reviewGen ||
+                State != WidgetState.AwaitingApproval)
+            {
+                return;
+            }
+
+            CancellationToken token = _processingCts?.Token ?? default;
+            byte[] approvalAudio;
+            try
+            {
+                approvalAudio = await listener.ListenForApprovalAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception)
+            {
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen)
+                    {
+                        State = WidgetState.Confirm;
+                        StatusLine = "Approval listening failed — review the draft, then confirm";
+                        _controller?.Start();
+                    }
+                });
+                return;
+            }
+
+            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen || State != WidgetState.AwaitingApproval)
+            {
+                return;
+            }
+
+            // Silence timeout or empty audio
+            if (approvalAudio.Length == 0)
+            {
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen && State == WidgetState.AwaitingApproval)
+                    {
+                        State = WidgetState.Confirm;
+                        StatusLine = "Review the draft, then confirm";
+                        _controller?.Start();
+                    }
+                });
+                return;
+            }
+
+            // Transcribe using Parakeet ONLY — NEVER call cleaner for commands!
+            string commandText = string.Empty;
+            if (_pipeline != null)
+            {
+                try
+                {
+                    TranscriptionResult transResult = _pipeline.TranscribeOnly(approvalAudio, token);
+                    commandText = transResult.Text;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch
+                {
+                    commandText = string.Empty;
+                }
+            }
+
+            ApprovalCommand command = ApprovalCommandClassifier.Classify(commandText);
+
+            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen || State != WidgetState.AwaitingApproval)
+            {
+                return;
+            }
+
+            LastApprovalStatus = $"Heard: \"{commandText}\" ({command})";
+
+            switch (command)
+            {
+                case ApprovalCommand.Affirmative:
+                    _controller?.Start();
+                    await ConfirmAsync().ConfigureAwait(false);
+                    return;
+
+                case ApprovalCommand.Cancel:
+                    _dispatchAction(Cancel);
+                    return;
+
+                case ApprovalCommand.Redictate:
+                    _dispatchAction(StartRedictation);
+                    return;
+
+                default: // Unknown
+                    attempt++;
+                    if (attempt < maxAttempts)
+                    {
+                        _dispatchAction(() =>
+                        {
+                            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen || State != WidgetState.AwaitingApproval)
+                            {
+                                return;
+                            }
+
+                            StatusLine = string.IsNullOrWhiteSpace(commandText)
+                                ? $"Didn't catch that. Send to {destination.DisplayName}, or redictate?"
+                                : $"Didn't catch \"{commandText}\". Send to {destination.DisplayName}, or redictate?";
+                        });
+                    }
+                    else
+                    {
+                        _dispatchAction(() =>
+                        {
+                            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen || State != WidgetState.AwaitingApproval)
+                            {
+                                return;
+                            }
+
+                            State = WidgetState.Confirm;
+                            StatusLine = "Review the draft, then confirm";
+                            _controller?.Start();
+                        });
+                        return;
+                    }
+                    break;
+            }
+        }
+    }
+
+    private void StartRedictation()
+    {
+        int generation = BeginNewUtterance();
+        CancellationToken token = _processingCts!.Token;
+
+        State = WidgetState.Redictating;
+        DraftText = string.Empty;
+        RawTranscript = string.Empty;
+        StageTimings = string.Empty;
+        ErrorMessage = string.Empty;
+        StatusLine = "Listening for new draft... speak now";
+        _controller?.Stop();
+
+        IApprovalListener? listener = _approvalListener;
+        if (listener == null)
+        {
+            State = WidgetState.Idle;
+            StatusLine = $"Ready — Hold {HotkeyLabel} to speak";
+            _controller?.Start();
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            byte[] redictatedAudio;
+            try
+            {
+                redictatedAudio = await listener.ListenForReplacementDictationAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(generation))
+                    {
+                        ErrorMessage = ex.Message;
+                        State = WidgetState.Error;
+                        StatusLine = "Redictation capture failed";
+                        _controller?.Start();
+                    }
+                });
+                return;
+            }
+
+            if (!IsCurrent(generation))
+            {
+                return;
+            }
+
+            if (redictatedAudio.Length == 0)
+            {
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(generation))
+                    {
+                        State = WidgetState.Idle;
+                        StatusLine = $"Ready — Hold {HotkeyLabel} to speak";
+                        _controller?.Start();
+                    }
+                });
+                return;
+            }
+
+            ProcessAudioBytes(redictatedAudio, generation, token);
+        });
     }
 
     private void OnCaptureError(object? sender, CaptureErrorEventArgs e)
@@ -986,6 +1352,11 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         DetachController();
+        _approvalListener?.Cancel();
+        if (_approvalListener is IDisposable disposableListener)
+        {
+            disposableListener.Dispose();
+        }
         _processingCts?.Cancel();
         _processingCts?.Dispose();
         _processingCts = null;

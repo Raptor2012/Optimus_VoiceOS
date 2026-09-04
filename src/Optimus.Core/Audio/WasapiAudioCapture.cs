@@ -48,6 +48,7 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
 
     public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
+    public event EventHandler<AudioChunkEventArgs>? AudioChunkAvailable;
 
     public void StartCapture()
     {
@@ -307,6 +308,9 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
                     {
                         _inMemoryBuffer?.Write(buffer, 0, count);
                     }
+
+                    float peak = ComputePeak(buffer, count, _format.SampleFormat);
+                    AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(new ReadOnlyMemory<byte>(buffer, 0, count), peak));
                 });
 
             LastPacketsAcquired += drain.PacketsAcquired;
@@ -321,6 +325,43 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
         {
             ErrorOccurred?.Invoke(this, new CaptureErrorEventArgs($"Audio packet read failed: {ex.Message}", ex));
         }
+    }
+
+    private static float ComputePeak(byte[] buffer, int count, WaveSampleFormat format)
+    {
+        if (count == 0)
+        {
+            return 0f;
+        }
+
+        float maxPeak = 0f;
+        if (format == WaveSampleFormat.Float32)
+        {
+            int floatCount = count / sizeof(float);
+            for (int i = 0; i < floatCount; i++)
+            {
+                float val = Math.Abs(BitConverter.ToSingle(buffer, i * sizeof(float)));
+                if (val > maxPeak)
+                {
+                    maxPeak = val;
+                }
+            }
+        }
+        else if (format == WaveSampleFormat.Pcm16)
+        {
+            int shortCount = count / sizeof(short);
+            for (int i = 0; i < shortCount; i++)
+            {
+                short val = BitConverter.ToInt16(buffer, i * sizeof(short));
+                float norm = Math.Abs(val) / 32768f;
+                if (norm > maxPeak)
+                {
+                    maxPeak = norm;
+                }
+            }
+        }
+
+        return maxPeak;
     }
 
     private void CleanupWasapiResources()

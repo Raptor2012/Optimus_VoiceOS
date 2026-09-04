@@ -24,6 +24,8 @@ public sealed class PushToTalkController : IDisposable
 
     public byte[]? LastCapturedAudio { get; private set; }
 
+    public IAudioCaptureService AudioCaptureService => _audioCaptureService;
+
     public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
     public event EventHandler<byte[]>? AudioCaptured;

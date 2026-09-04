@@ -30,6 +30,23 @@ public sealed class VoicePipeline : IDisposable
 
     public bool IsWarm => _transcriber.IsLoaded && _cleaner.IsLoaded;
 
+    public ISpeechTranscriber Transcriber => _transcriber;
+
+    public IPromptCleaner Cleaner => _cleaner;
+
+    /// <summary>
+    /// Transcribes audio directly through Parakeet without invoking prompt cleanup.
+    /// Used for spoken approval commands.
+    /// </summary>
+    public TranscriptionResult TranscribeOnly(
+        byte[] pcm16Mono16k,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(pcm16Mono16k);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _transcriber.Transcribe(pcm16Mono16k, cancellationToken);
+    }
+
     /// <summary>Loads both models. Prefer <see cref="WarmupAsync"/>, which also primes them.</summary>
     public void Warmup()
     {

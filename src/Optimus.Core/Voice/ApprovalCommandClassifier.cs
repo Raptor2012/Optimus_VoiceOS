@@ -32,6 +32,19 @@ public static class ApprovalCommandClassifier
         "redictate",
         "try again",
         "start over",
+        "redo",
+        "retry",
+        "change that",
+    };
+
+    private static readonly HashSet<string> CancelCommands = new(StringComparer.Ordinal)
+    {
+        "cancel",
+        "no",
+        "stop",
+        "abort",
+        "scratch that",
+        "never mind",
     };
 
     public static ApprovalCommand Classify(string? transcript)
@@ -48,7 +61,12 @@ public static class ApprovalCommandClassifier
             return ApprovalCommand.Redictate;
         }
 
-        return normalized == "cancel" ? ApprovalCommand.Cancel : ApprovalCommand.Unknown;
+        if (CancelCommands.Contains(normalized))
+        {
+            return ApprovalCommand.Cancel;
+        }
+
+        return ApprovalCommand.Unknown;
     }
 
     private static string Normalize(string? transcript)

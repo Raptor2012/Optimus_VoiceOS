@@ -21,13 +21,22 @@ public sealed class ApprovalCommandClassifierTests
     [InlineData("redictate")]
     [InlineData("Try again!")]
     [InlineData("start-over")]
+    [InlineData("redo")]
+    [InlineData("retry")]
+    [InlineData("change that")]
     public void Classify_AcceptsEveryRedictationVariant(string transcript) =>
         Assert.Equal(ApprovalCommand.Redictate, ApprovalCommandClassifier.Classify(transcript));
 
     [Theory]
     [InlineData("cancel")]
     [InlineData(" CANCEL!!! ")]
-    public void Classify_AcceptsCancel(string transcript) =>
+    [InlineData("no")]
+    [InlineData("NO!")]
+    [InlineData("stop")]
+    [InlineData("abort")]
+    [InlineData("scratch that")]
+    [InlineData("never mind")]
+    public void Classify_AcceptsEveryCancelVariant(string transcript) =>
         Assert.Equal(ApprovalCommand.Cancel, ApprovalCommandClassifier.Classify(transcript));
 
     [Theory]
@@ -36,10 +45,11 @@ public sealed class ApprovalCommandClassifierTests
     [InlineData("   ... ")]
     [InlineData("please send")]
     [InlineData("yes send")]
-    [InlineData("no")]
     [InlineData("confirm it")]
     [InlineData("do it now")]
     [InlineData("cancel that")]
+    [InlineData("maybe")]
+    [InlineData("wait")]
     public void Classify_RejectsAnythingOutsideTheFiniteVocabulary(string? transcript) =>
         Assert.Equal(ApprovalCommand.Unknown, ApprovalCommandClassifier.Classify(transcript));
 }

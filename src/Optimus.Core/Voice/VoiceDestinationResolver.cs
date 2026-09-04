@@ -37,9 +37,10 @@ public sealed class VoiceDestinationResolver
     public VoiceDestinationResolution Resolve(string? transcript)
     {
         string source = transcript?.Trim() ?? string.Empty;
-        if (!TryConsumeToPrefix(source, out int aliasStart))
+        bool hasToPrefix = TryConsumeToPrefix(source, out int aliasStart);
+        if (!hasToPrefix)
         {
-            return new(VoiceDestinationResolutionStatus.Missing, null, source);
+            aliasStart = 0;
         }
 
         var matches = new List<(VoiceDestinationAlias Alias, int End)>();
@@ -53,7 +54,7 @@ public sealed class VoiceDestinationResolver
 
         if (matches.Count == 0)
         {
-            return new(VoiceDestinationResolutionStatus.Unknown, null, source);
+            return new(hasToPrefix ? VoiceDestinationResolutionStatus.Unknown : VoiceDestinationResolutionStatus.Missing, null, source);
         }
 
         if (matches.Count != 1)
