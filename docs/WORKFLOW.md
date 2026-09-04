@@ -36,3 +36,45 @@ the first Windows/Pixel vertical slice. Finish the two recorded S005 state fixes
 S006-S010 in order: exact local TTS review, automatic spoken approval and routing, Pixel audio,
 exact-window observation, and event-driven spoken feedback. Do not turn any slice into a protocol,
 security, or framework project.
+# Current implementation handoff — 2026-09-05
+
+Use branch `optimus/S002-stt-cleanup` in `D:\SamHaydenVoiceTool\Optimus_VoiceOS`.
+
+Integrated commits:
+
+- `e3846f6` — S008 ordered Pixel TTS transport and Android playback foundation.
+- `25910f9` — S009/S010 exact-window observer → narration scheduler → Piper playback,
+  including Windows/Pixel narration controls and origin-aware output.
+- `9efde88` — Gemini S007 automatic desktop spoken approval, redictation, and exact
+  voice-destination routing, conflict-resolved on top of S008–S010.
+
+Verification after integration:
+
+- `dotnet build Optimus.sln -c Release` succeeded with zero warnings.
+- `dotnet test Optimus.sln -c Release --no-build` passed: 1 Contracts, 14 Inference,
+  21 Providers, and 231 Core tests (267 total).
+- Android tests and debug APK passed immediately before the S007 cherry-pick; S007 changed no
+  Android files. Re-run the command below for final handoff evidence.
+
+Next commands:
+
+```powershell
+cd D:\SamHaydenVoiceTool\Optimus_VoiceOS
+dotnet test Optimus.sln -c Release
+$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot'
+.\android\gradlew.bat -p android testDebugUnitTest assembleDebug
+```
+
+Next implementation priority:
+
+1. Connect Piper review synthesis to `PhoneEndpoint.SendTtsAudio` for Pixel-originated drafts.
+   S008 currently provides the transport/player and S010 uses it for agent narration, but the
+   pre-send spoken draft review still plays on the PC through `SpokenReviewPlayer`.
+2. After the Pixel review drains, capture its approval command automatically and feed the same
+   finite S007 classifier. Disconnect must send nothing.
+3. Dogfood one real prompt each in Claude, Antigravity, and Codex. Tune only concrete UIA text
+   classification problems; do not restart architecture/security review.
+
+Important invariants already preserved: explicit exact destination, exact visible draft, no
+guessing, no send on unclear approval, one-send guard, observer baselined before submit, only the
+bound HWND observed, stale narration cancelled, and Pixel audio never silently rerouted to PC.
