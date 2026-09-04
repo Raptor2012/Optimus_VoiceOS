@@ -58,6 +58,7 @@ Control messages, JSON, one per frame:
 | core to runner | `warmup` | `iterations` |
 | core to runner | `job` | `jobId`, `kind`, `deadlineMs`, `params` |
 | core to runner | `cancel` | `jobId` |
+| runner to core | `cancel-received` | `jobId`; control-plane receipt only, never releases a GPU lease |
 | core to runner | `shutdown` | `graceMs` |
 | core to runner | `ping` | `nonce` |
 | runner to core | `pong` | `nonce`, `jobQueueDepth`, `vramBytes` |
@@ -75,7 +76,7 @@ Rules:
 - A runner must emit `ready` within `startupTimeoutMs` (default 45 000, which covers a cold first CUDA context) or it is killed.
 - A runner processes at most one job at a time. Queueing is Core's responsibility.
 - An `asr` job is long-lived: it is opened at capture start and receives binary frames until the frame carrying the `final` flag. `partial` results may be emitted throughout. Every other job is request-response.
-- A preemptible runner (`tts`, or any runner executing a `P2Background` job) must read the control pipe on a dedicated thread and emit `cancelled` within 20 ms of a preemptive `cancel`, before unwinding its own state (section 4 rule 2).
+- A preemptible runner (`tts`, or any runner executing a `P2Background` job) reads the control pipe on a dedicated thread and emits `cancel-received` promptly. It emits terminal `cancelled` only after all in-flight GPU work is synchronized or abandoned and the job can never touch the GPU again (section 4 rule 2).
 
 ### 3. .NET-side contracts
 
@@ -137,14 +138,14 @@ Scheduling rules:
 
 1. Admission is by priority, then FIFO within a priority.
 2. **Preemption sequence.** When a higher-priority job is queued while a lower-priority job holds the slot, the scheduler:
-   1. sends `cancel { jobId }` immediately and starts a **20 ms** acknowledgement timer;
-   2. grants the lease as soon as `cancelled` arrives;
-   3. at 20 ms with no acknowledgement, terminates the runner process and waits for the process handle to signal, budget **40 ms**, then grants the lease and restarts the runner under section 6;
+   1. sends `cancel { jobId }` immediately and starts a **20 ms** quiescence timer; `cancel-received` confirms only that the control thread saw the request;
+   2. grants the lease only when terminal `cancelled` arrives. Before sending it, the runner must stop launching GPU work, synchronize or abandon every in-flight kernel, and guarantee that the job will never touch the GPU again;
+   3. at 20 ms with no terminal `cancelled`, terminates the runner process and waits for the process handle to signal, budget **40 ms**, then grants the lease and restarts the runner under section 6;
    4. if the process has still not exited at **60 ms** from the `cancel`, marks the slot `Stuck`, refuses the lease with `GPU_SLOT_STUCK`, and fails the waiting job rather than running it concurrently.
 
    **`W_preempt` = 60 ms is the single preemption bound** used by this ADR, `docs/specs/WIRE_PROTOCOL.md`, `docs/performance/LATENCY_BUDGET.md`, and `docs/performance/BENCHMARK_PLAN.md`. There is no interval in which two runners hold the GPU, and there is no gap between the stated worst case and the point at which failure is declared: both are 60 ms.
 
-   The 20 ms acknowledgement deadline is a requirement on the only preemptible code paths, `P1Speech` and `P2Background`. Those runners must read the control pipe on a dedicated thread and emit `cancelled` **before** unwinding, then stop launching new GPU work. They are not required to abandon an already-launched kernel, which is why 40 ms of verified-exit budget follows.
+   The 20 ms terminal deadline is a requirement on the only preemptible code paths, `P1Speech` and `P2Background`. A dedicated control reader makes receipt prompt, but receipt is not release: if an already-launched kernel cannot be synchronized or abandoned before 20 ms, Core terminates the process and uses verified exit as the release event. Control-pipe responsiveness alone can never transfer the lease.
 3. `P1Speech` preempts `P2Background` by the same sequence.
 4. A preempted TTS job is resumable at chunk granularity: Core records the last delivered chunk index and re-issues the remainder as a new job. A preempted benchmark run is discarded and the benchmark reports the interruption rather than the timing.
 5. Job deadlines, each measured from a stated origin:
@@ -192,7 +193,7 @@ The scheduler exposes `Task<GpuLease> AcquireAsync(GpuJobRequest, CancellationTo
 Cancellation is cooperative with a hard fallback. There are two deadlines, and which one applies depends on whether anything is waiting for the GPU slot:
 
 1. Core cancels the `CancellationToken`; the runner client sends `cancel { jobId }` on the pipe.
-2. The runner must abandon the job and reply `cancelled`. The deadline depends on the path: **20 ms** for a preemptive cancel, **100 ms** otherwise. Runners check a cancellation flag between decode or generation steps; preemptible runners additionally acknowledge from a dedicated control-reader thread before unwinding, which is what makes 20 ms achievable.
+2. The control reader may reply `cancel-received` immediately, but that message never releases the lease. The runner replies terminal `cancelled` only after it has abandoned the job, synchronized or abandoned all in-flight GPU work, and will never touch the GPU again for that job. The terminal deadline is **20 ms** for a preemptive cancel and **100 ms** otherwise.
 3. **Preemptive cancellation** (a higher-priority job or an interactive window is waiting for the slot) escalates at 20 ms: terminate, wait for verified exit up to 40 ms, then `GPU_SLOT_STUCK` at 60 ms from the `cancel`. Section 4 rule 2 is normative and its `W_preempt` of 60 ms is the only bound quoted anywhere.
 4. **Non-preemptive cancellation** (a user cancel or a deadline expiry with nothing queued behind it) allows the runner **500 ms** to acknowledge before Core marks it `Degraded`, kills it, and restarts it under section 6. The in-flight job fails with `RUNNER_UNRESPONSIVE`. The longer window is safe here precisely because no one is waiting for the slot, so it cannot produce overlap.
 5. Cancellation is idempotent; a `cancel` for an unknown or finished `jobId` is a no-op and is acknowledged.
@@ -269,7 +270,7 @@ Core verifies every listed file hash at startup and after every runner restart. 
 - Worst-case preemption is `W_preempt` = 60 ms, bounded by verified process exit rather than by a timer alone. The pathological case surfaces as `GPU_SLOT_STUCK` and a failed job, not as silent GPU contention.
 - The ASR runner holds the GPU for the duration of every utterance. Cleanup queues behind it, which the sequential budget already assumes, and TTS is barred for the window anyway.
 - Voice output can be cut off mid-sentence when the user starts speaking, and it is cut off at press rather than at release. This is the correct trade: the user is the higher priority.
-- Preemptible runners must acknowledge a cancel within 20 ms, which constrains how the TTS and background loops are written. This is a real implementation cost and is called out in T007 and T014.
+- Preemptible runners must reach verified GPU quiescence within 20 ms or be terminated, which constrains kernel/chunk sizing in the TTS and background loops. This is a real implementation cost and is called out in T007 and T014.
 - A key press that captures no speech produces nothing, and the reason given is `NO_SPEECH_DETECTED` rather than a duration judgement. A one-word command is processed normally and appears in the performance data.
 - Voice Design temporarily suspends dictation. This is visible and explained in the UI.
 - Every runner failure has a defined, invariant-preserving degradation, so a crash never produces a silently different prompt.
@@ -278,7 +279,7 @@ Core verifies every listed file hash at startup and after every runner restart. 
 ## Verification
 
 - T007 unit tests: pipe framing vectors, `ready` timeout, ping-miss detection, restart backoff and the 5-in-5 terminal rule, cancellation acknowledged inside 100 ms, kill after 500 ms, lease required for every GPU call.
-- T007 scheduler tests: priority admission order; the four preemption outcomes in section 4 rule 2, each asserted with a fake runner that acknowledges promptly, acknowledges late, exits only on terminate, and never exits, with the 20 / 40 / 60 ms boundaries asserted explicitly; an assertion that no two leases are ever concurrently live, verified by a counter that fails the test on a second grant; deadline expiry cancels rather than blocks; TTS chunk-resume after preemption; `EnterInteractiveWindow` preempts `P1`/`P2` and bars their admission until the window closes.
+- T007 scheduler tests: priority admission order; the four preemption outcomes in section 4 rule 2, including a fake runner that emits `cancel-received` while a simulated long kernel remains active; Core must not grant on receipt and may grant only after terminal `cancelled` or verified exit. The test asserts both zero concurrent leases and zero overlapping simulated GPU execution at the 20 / 40 / 60 ms boundaries; deadline expiry cancels rather than blocks; TTS chunk-resume after preemption; `EnterInteractiveWindow` preempts `P1`/`P2` and bars their admission until the window closes.
 - T007 and T008 lease-lifecycle tests: the ASR lease is requested at `StartCapture` and released only after `result`; frames arriving before the grant are buffered and then decoded in order with no loss and no reordering; exceeding `capture.maxPreLeaseBufferMs` aborts with `LeaseUnavailable`; cleanup admits only after the ASR lease is released; `gpu.leaseWait` is zero for every utterance longer than `W_preempt`.
 - T008 tests: `speechDetected` false yields `NO_SPEECH_DETECTED` with no transcript and no draft; `speechDetected` true yields a transcript at every duration tested, including 150 ms single-word commands, and those runs appear in the G2 and G3 population.
 - T011 and T028 measure G2 and G3 with TTS actively speaking at hotkey press (the `active-tts-to-hotkey` scenario in `docs/performance/BENCHMARK_PLAN.md` section 2.4) and record preemption outcome and admission wait for every run.

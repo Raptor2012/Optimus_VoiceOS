@@ -267,7 +267,7 @@ Results:
 - Round 2: corrections committed on this branch. All six round-1 P1 findings and the round-1 P2 finding were addressed.
 - Round 2 review: `reviews/T001-sol-round2.md`, reviewed commit `7d72be1`, verdict `CHANGES_REQUIRED`. Five round-1 findings confirmed resolved; two replacement designs (queue-drop reporting, ASR lease lifecycle and short-utterance policy) carried blocking contradictions, plus two precision issues.
 - Round 3: corrections committed on this branch. Both P1 findings and both P2 findings are addressed as recorded above. Awaiting round-3 review by GPT-5.6 Sol against the new branch head.
-- Round 2 review: `reviews/T001-sol-round2.md`
-- Reviewed branch head: `7d72be1`
-- Verdict: `CHANGES_REQUIRED`
-- Remaining blockers: restart-safe queue-drop reporting and a coherent streaming-ASR/GPU-lease lifecycle without discarding deliberate sub-250 ms commands. P2 corrections are also required for signing-side low-S behavior and deterministic unknown-session errors.
+- Round 3 review: `reviews/T001-sol-round3.md`
+- Reviewed branch head: `1066a93`
+- Verdict: `PASS`
+- Reviewer closeout: separated `cancel-received` from terminal GPU-quiescent `cancelled`, made capture globally exclusive, and recorded the double-startup queue-notice window as an accepted T018 limitation. No T002 blocker remains.

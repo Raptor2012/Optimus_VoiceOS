@@ -198,7 +198,7 @@ The device's connection identity and current capabilities.
 | `sampleRateHz` | int | Must be 16000 |
 | `inputDeviceLabel` | string? | Diagnostics only |
 
-Response `CaptureStarted { streamId, maxUtteranceSeconds }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`.
+Response `CaptureStarted { streamId, maxUtteranceSeconds }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`. Core permits exactly one active capture globally; a simultaneous `StartCapture` from any other device is rejected immediately rather than queued behind the active P0 ASR job.
 
 Accepting `StartCapture` does two things in Core (ADR-004 section 4): it opens the GPU interactive window, preempting any speech or background GPU job and barring their admission until the draft is delivered; and it requests the ASR lease immediately, so decoding can begin while the key is still held. Frames that arrive before the lease is granted are buffered in Core, bounded by `capture.maxPreLeaseBufferMs` (2000 ms).
 
@@ -218,7 +218,7 @@ This is a decision about what the audio contained, made by the runner that decod
 
 #### `AudioAborted` (S2D)
 
-`{ streamId, code }` where `code` is `Reconnected` \| `FrameInvalid` \| `RateLimited` \| `RunnerFailed` \| `LeaseUnavailable`. The device must discard local capture state; no draft will follow. `LeaseUnavailable` means Core buffered more than `capture.maxPreLeaseBufferMs` of audio without obtaining the ASR lease, which indicates a stuck GPU slot rather than a device problem.
+`{ streamId, code }` where `code` is `Reconnected` \| `FrameInvalid` \| `RateLimited` \| `RunnerFailed` \| `LeaseUnavailable`. The device must discard local capture state; no draft will follow. `LeaseUnavailable` means the scheduler failed to grant the ASR lease within `capture.maxPreLeaseBufferMs`; it cannot be caused by another capture because capture admission is globally exclusive.
 
 #### `Transcript` (S2D)
 
@@ -521,7 +521,7 @@ Codes are stable within major version 1.
 
 | Code | Meaning | Retryable |
 | --- | --- | --- |
-| `CAPTURE_ALREADY_ACTIVE` | A stream is already open for this device | no |
+| `CAPTURE_ALREADY_ACTIVE` | A stream is already open on any device; Core permits one global capture | yes |
 | `AUDIO_FRAME_INVALID` | Bad header or unknown stream | no |
 | `ASR_UNAVAILABLE` | ASR runner failed | yes |
 | `CLEANUP_UNAVAILABLE` | Cleanup runner failed; draft is the raw transcript | yes |
