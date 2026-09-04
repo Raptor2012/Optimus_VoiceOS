@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:Optimus.Shell.ViewModels"
+        xmlns:core="clr-namespace:Optimus.Core.Narration;assembly=Optimus.Core"
         mc:Ignorable="d"
         Title="Optimus Voice OS"
         MinHeight="150"
@@ -288,6 +289,21 @@
                                 FontSize="10"
                                 Cursor="Hand" />
                     </StackPanel>
+                </StackPanel>
+
+                <StackPanel Margin="0,8,0,0">
+                    <TextBlock Text="AGENT NARRATION" FontSize="9" FontWeight="SemiBold" Foreground="#636366" />
+                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                        <ComboBox SelectedValue="{Binding NarrationMode}" SelectedValuePath="Tag" Width="130">
+                            <ComboBoxItem Content="Concise" Tag="{x:Static core:NarrationMode.Concise}" />
+                            <ComboBoxItem Content="Comprehensive" Tag="{x:Static core:NarrationMode.Comprehensive}" />
+                        </ComboBox>
+                        <CheckBox Content="Narrate tools &amp; skills" IsChecked="{Binding NarrateToolsAndSkills}"
+                                  Foreground="#E5E5EA" Margin="10,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="{Binding NarrationStatus}" FontSize="10" Foreground="#A78BFA"
+                               TextWrapping="Wrap" Margin="0,3,0,0"
+                               Visibility="{Binding HasNarrationStatus, Converter={StaticResource BoolToVis}}" />
                 </StackPanel>
 
                 <!-- Confirm panel if confirm state -->

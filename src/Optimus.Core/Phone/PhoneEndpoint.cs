@@ -59,6 +59,12 @@ public sealed class PhonePlaybackDrainedEventArgs : EventArgs
     public long Generation { get; }
 }
 
+public sealed class PhoneNarrationSettingsEventArgs(string mode, bool narrateToolsAndSkills) : EventArgs
+{
+    public string Mode { get; } = mode;
+    public bool NarrateToolsAndSkills { get; } = narrateToolsAndSkills;
+}
+
 /// <summary>
 /// One direct TCP endpoint the phone connects to over LAN or Tailscale.
 /// </summary>
@@ -127,6 +133,8 @@ public sealed class PhoneEndpoint : IDisposable
 
     /// <summary>The phone has played every PCM frame for this generation.</summary>
     public event EventHandler<PhonePlaybackDrainedEventArgs>? PlaybackDrained;
+
+    public event EventHandler<PhoneNarrationSettingsEventArgs>? NarrationSettingsChanged;
 
     public void Start()
     {
@@ -287,6 +295,10 @@ public sealed class PhoneEndpoint : IDisposable
                 RaisePlaybackDrained(json);
                 break;
 
+            case "narrationSettings":
+                RaiseNarrationSettings(json);
+                break;
+
             default:
                 break;
         }
@@ -306,6 +318,22 @@ public sealed class PhoneEndpoint : IDisposable
         catch (JsonException)
         {
         }
+    }
+
+    private void RaiseNarrationSettings(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            string mode = root.TryGetProperty("mode", out JsonElement modeValue)
+                ? modeValue.GetString() ?? "concise"
+                : "concise";
+            bool tools = root.TryGetProperty("narrateToolsAndSkills", out JsonElement toolsValue) &&
+                         toolsValue.ValueKind == JsonValueKind.True;
+            NarrationSettingsChanged?.Invoke(this, new PhoneNarrationSettingsEventArgs(mode, tools));
+        }
+        catch (JsonException) { }
     }
 
     /// <summary>

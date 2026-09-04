@@ -1,0 +1,217 @@
+namespace Optimus.Shell;
+
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Optimus.Core.Audio;
+using Optimus.Core.Narration;
+using Optimus.Core.Phone;
+using Optimus.Inference;
+using Optimus.Providers;
+using Optimus.Providers.Windows;
+
+/// <summary>Connects one exact bound agent window to filtered, ordered local speech.</summary>
+public sealed class AgentNarrationCoordinator : IDisposable
+{
+    private readonly PiperSpeechSynthesizer _synthesizer;
+    private readonly PhoneEndpoint? _phone;
+    private readonly Func<NarrationOptions> _options;
+    private readonly Action<string> _status;
+    private readonly object _gate = new();
+    private CancellationTokenSource? _runCts;
+    private WaveOutPlayer? _pcPlayer;
+    private long _generation;
+    private bool _disposed;
+
+    public AgentNarrationCoordinator(
+        PiperSpeechSynthesizer synthesizer,
+        PhoneEndpoint? phone,
+        Func<NarrationOptions> options,
+        Action<string> status)
+    {
+        _synthesizer = synthesizer ?? throw new ArgumentNullException(nameof(synthesizer));
+        _phone = phone;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _status = status ?? throw new ArgumentNullException(nameof(status));
+    }
+
+    /// <summary>Baselines and starts observing before the prompt is submitted.</summary>
+    public void Start(IDestinationAdapter adapter, bool speakOnPhone, string confirmedPrompt)
+    {
+        ArgumentNullException.ThrowIfNull(adapter);
+        if (adapter is not WindowsAppAdapter windows)
+        {
+            throw new InvalidOperationException("Narration requires an exact Windows destination.");
+        }
+
+        Cancel();
+        var observer = windows.CreateObserver();
+        observer.Poll(); // Existing conversation history must never be narrated as new activity.
+
+        var cts = new CancellationTokenSource();
+        long generation = Interlocked.Increment(ref _generation);
+        lock (_gate) _runCts = cts;
+
+        _status($"Watching {adapter.DisplayName} for visible updates");
+        _ = Task.Run(() => RunAsync(observer, adapter.DisplayName, speakOnPhone, confirmedPrompt.Trim(), generation, cts.Token));
+    }
+
+    public void Cancel()
+    {
+        CancellationTokenSource? old;
+        lock (_gate)
+        {
+            old = _runCts;
+            _runCts = null;
+        }
+
+        old?.Cancel();
+        old?.Dispose();
+        _pcPlayer?.Stop();
+        if (_phone?.IsConnected == true)
+        {
+            try { _phone.CancelPlayback(Volatile.Read(ref _generation)); }
+            catch (InvalidOperationException) { }
+        }
+    }
+
+    private async Task RunAsync(
+        AgentWindowObserver observer,
+        string destinationName,
+        bool speakOnPhone,
+        string confirmedPrompt,
+        long generation,
+        CancellationToken token)
+    {
+        string runId = generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var scheduler = new NarrationScheduler(_options());
+        using var observeCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+
+        Task observe = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (VisibleAgentUpdate update in observer.ObserveAsync(TimeSpan.FromMilliseconds(180), observeCts.Token))
+                {
+                    // Sending makes the user's own prompt appear in the conversation. It is not
+                    // agent activity and must not be echoed back as Comprehensive narration.
+                    if (string.Equals(update.Text.Trim(), confirmedPrompt, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    scheduler.Options = _options();
+                    scheduler.Enqueue(ToNarrationEvent(runId, update));
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
+
+        try
+        {
+            await foreach (SpeakableItem item in scheduler.GetSpeakableStreamAsync(token))
+            {
+                _status($"{destinationName}: {item.Text}");
+                SpeechSegment segment = await Task.Run(
+                    () => _synthesizer.Speak(item.Text, token), token).ConfigureAwait(false);
+
+                if (speakOnPhone)
+                {
+                    await PlayOnPhoneAsync(segment, generation, token).ConfigureAwait(false);
+                }
+                else
+                {
+                    PlayOnPc(segment, token);
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException)
+        {
+            _status($"Narration stopped: {ex.Message}");
+        }
+        finally
+        {
+            observeCts.Cancel();
+            try { await observe.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        }
+    }
+
+    internal static NarrationEvent ToNarrationEvent(string runId, VisibleAgentUpdate update)
+    {
+        NarrationEventType type = update.Activity switch
+        {
+            VisibleAgentActivity.Progress => NarrationEventType.Progress,
+            VisibleAgentActivity.ToolOrSkill when update.Text.Contains("skill", StringComparison.OrdinalIgnoreCase) => NarrationEventType.SkillUse,
+            VisibleAgentActivity.ToolOrSkill => NarrationEventType.ToolCall,
+            VisibleAgentActivity.FinalResponseCandidate => NarrationEventType.FinalResponse,
+            _ when update.Text.TrimEnd().EndsWith('?') => NarrationEventType.AgentQuestion,
+            _ => NarrationEventType.Progress
+        };
+
+        // A few high-value transitions remain audible in Concise mode.
+        if (type == NarrationEventType.Progress && ContainsTransition(update.Text))
+        {
+            type = NarrationEventType.StatusTransition;
+        }
+
+        return new NarrationEvent(
+            runId,
+            type,
+            update.Text,
+            update.ObservedAtUtc,
+            isStreamingFragment: type == NarrationEventType.Progress);
+    }
+
+    private static bool ContainsTransition(string text) =>
+        text.Contains("planning", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("editing", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("running tests", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("tests passed", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("tests failed", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("completed", StringComparison.OrdinalIgnoreCase);
+
+    private void PlayOnPc(SpeechSegment segment, CancellationToken token)
+    {
+        _pcPlayer ??= new WaveOutPlayer(segment.SampleRate);
+        if (!_pcPlayer.IsOpen) _pcPlayer.Open();
+        _pcPlayer.Queue(segment.Pcm, segment.Pcm.Length);
+        _pcPlayer.WaitForDrain(token);
+    }
+
+    private async Task PlayOnPhoneAsync(SpeechSegment segment, long generation, CancellationToken token)
+    {
+        if (_phone?.IsConnected != true)
+        {
+            throw new InvalidOperationException("Phone disconnected; narration was not rerouted.");
+        }
+
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnDrained(object? _, PhonePlaybackDrainedEventArgs e)
+        {
+            if (e.Generation == generation) drained.TrySetResult();
+        }
+
+        _phone.PlaybackDrained += OnDrained;
+        try
+        {
+            _phone.SendPlaybackStart(generation);
+            _phone.SendTtsAudio(new PhoneTtsAudioSegment(
+                generation, 0, segment.SampleRate, 1,
+                PhonePcmEncoding.Pcm16LittleEndian, segment.Pcm));
+            _phone.SendPlaybackEnd(generation);
+            await drained.Task.WaitAsync(TimeSpan.FromSeconds(45), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            _phone.PlaybackDrained -= OnDrained;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        Cancel();
+        _pcPlayer?.Dispose();
+    }
+}

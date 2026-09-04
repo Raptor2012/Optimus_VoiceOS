@@ -201,6 +201,12 @@ access to private hidden chain-of-thought, and deduplicate text repeated by UI r
 Done when a real prompt to each application produces correctly attributed visible progress and a
 final response from only the bound window; activity in another window is ignored.
 
+Status: implemented and connected to the live send path. Observation is baselined immediately
+before submit, remains scoped to the exact bound HWND, ignores the user's echoed prompt, emits
+only appended visible text, and stops on a new run or stale binding. Automated exact-window,
+rerender, streaming-suffix, classification, and mapping tests pass. Remaining: one real prompt
+through each of Claude, Antigravity, and Codex to characterize their current UI Automation trees.
+
 ## S010 — Event-driven voice feedback
 
 Owner: Claude Opus 5
@@ -218,6 +224,13 @@ whole agent response, preserve ordering, and avoid speaking stale text after a n
 Done when PC- and Pixel-originated jobs receive ordered, non-repetitive speech on the correct
 device; both narration modes work; the tools/skills toggle works independently; and long visible
 responses begin speaking within the warm streaming latency budget rather than after completion.
+
+Status: implemented end to end. The observer feeds the generation-safe narration scheduler and
+warm Piper process; PC-originated runs play locally and Pixel-originated runs use the ordered S008
+PCM stream without fallback rerouting. Concise/Comprehensive and the independent tools/skills
+toggle are visible on both devices, with phone changes applied to the PC scheduler. Existing text
+is baselined before send and stale speech is cancelled when a newer utterance starts. Remaining:
+real-device dogfood to tune per-app UI text classification and narration phrasing.
 
 ## S011 — Dogfood and measured latency fixes
 

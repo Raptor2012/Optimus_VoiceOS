@@ -53,7 +53,9 @@ class MainActivity : ComponentActivity() {
                         onSelectDestination = vm::selectDestination,
                         onRefreshDestinations = vm::refreshDestinations,
                         onConfirm = vm::confirm,
-                        onCancel = vm::cancelDraft
+                        onCancel = vm::cancelDraft,
+                        onNarrationModeChange = vm::setNarrationMode,
+                        onNarrateToolsChange = vm::setNarrateToolsAndSkills
                     )
                 }
             }

@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using Optimus.Core.Audio;
+using Optimus.Core.Narration;
 using Optimus.Core.Speech;
 using Optimus.Inference;
 using Optimus.Providers;
@@ -41,6 +42,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private bool _isSpeakingReview;
     private string _lastSpokenKey = string.Empty;
     private int _spokenReviewGeneration;
+    private bool _draftOriginPhone;
+    private NarrationMode _narrationMode = NarrationMode.Concise;
+    private bool _narrateToolsAndSkills;
+    private string _narrationStatus = string.Empty;
+
+    public event EventHandler<AgentRunEventArgs>? AgentRunStarting;
+    public event EventHandler? AgentRunCancelled;
 
     public WidgetState State
     {
@@ -230,6 +238,32 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
     public bool HasPhoneStatus => !string.IsNullOrWhiteSpace(PhoneStatus);
 
+    public NarrationMode NarrationMode
+    {
+        get => _narrationMode;
+        set { if (_narrationMode != value) { _narrationMode = value; OnPropertyChanged(); } }
+    }
+
+    public bool NarrateToolsAndSkills
+    {
+        get => _narrateToolsAndSkills;
+        set { if (_narrateToolsAndSkills != value) { _narrateToolsAndSkills = value; OnPropertyChanged(); } }
+    }
+
+    public string NarrationStatus
+    {
+        get => _narrationStatus;
+        set { if (_narrationStatus != value) { _narrationStatus = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasNarrationStatus)); } }
+    }
+
+    public bool HasNarrationStatus => !string.IsNullOrWhiteSpace(NarrationStatus);
+
+    public NarrationOptions CurrentNarrationOptions => new()
+    {
+        Mode = NarrationMode,
+        NarrateToolsAndSkills = NarrateToolsAndSkills
+    };
+
     /// <summary>
     /// True while the draft is being read aloud. Capture is closed for this whole window so the
     /// microphone cannot hear the app's own speech.
@@ -408,6 +442,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
 
         BeginNewUtterance();
+        _draftOriginPhone = false;
         RawTranscript = text;
         DraftText = text;
         StageTimings = "manual draft · STT skipped · cleanup skipped";
@@ -425,6 +460,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void LoadPhoneDraft(string rawTranscript, string cleanedDraft, string timings)
     {
         BeginNewUtterance();
+        _draftOriginPhone = true;
         RawTranscript = rawTranscript;
         DraftText = cleanedDraft;
         StageTimings = timings;
@@ -448,6 +484,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = false;
         State = WidgetState.Sending;
         StatusLine = $"Sending to {destinationName} from phone...";
+        if (SelectedDestination != null)
+        {
+            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(SelectedDestination.Adapter, speakOnPhone: true, text));
+        }
     }
 
     /// <summary>Applies the adapter's real outcome to the same draft shown on both devices.</summary>
@@ -459,10 +499,12 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             LastSentText = text;
             ErrorMessage = string.Empty;
-            State = WidgetState.Sent;
             StatusLine = $"Sent to {destinationName} ({result.ElapsedMilliseconds} ms)";
+            State = WidgetState.Sent;
             return;
         }
+
+        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
 
         ErrorMessage = result.Detail;
         State = WidgetState.Error;
@@ -488,6 +530,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     {
         // Claims a new generation so an in-flight result cannot land after the cancel.
         BeginNewUtterance();
+        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         _speech?.Cancel();
         _lastSpokenKey = string.Empty;
         SpeechStatus = string.Empty;
@@ -573,6 +616,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         State = WidgetState.Sending;
         IsDraftEditable = false;
         StatusLine = $"Sending to {destination.DisplayName}...";
+        AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
 
         SendResult result;
         try
@@ -596,6 +640,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             ErrorMessage = string.Empty;
             return;
         }
+
+        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
 
         // Not sent. Leave the draft exactly as it was so the user can retry or fix the target.
         State = WidgetState.Error;
@@ -805,6 +851,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     /// </remarks>
     private int BeginNewUtterance()
     {
+        AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         Interlocked.Increment(ref _spokenReviewGeneration);
         _speech?.Cancel();
         _lastSpokenKey = string.Empty;
@@ -856,6 +903,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         _dispatchAction(() =>
         {
             generation = BeginNewUtterance();
+            _draftOriginPhone = false;
             token = _processingCts!.Token;
 
             State = WidgetState.Processing;
@@ -942,4 +990,11 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         _processingCts?.Dispose();
         _processingCts = null;
     }
+}
+
+public sealed class AgentRunEventArgs(IDestinationAdapter adapter, bool speakOnPhone, string confirmedPrompt) : EventArgs
+{
+    public IDestinationAdapter Adapter { get; } = adapter;
+    public bool SpeakOnPhone { get; } = speakOnPhone;
+    public string ConfirmedPrompt { get; } = confirmedPrompt;
 }

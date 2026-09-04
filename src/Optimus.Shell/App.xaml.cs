@@ -7,6 +7,7 @@ using System.Windows;
 using Optimus.Core.Audio;
 using Optimus.Core.Hotkeys;
 using Optimus.Core.Phone;
+using Optimus.Core.Narration;
 using Optimus.Core.Speech;
 using Optimus.Inference;
 using Optimus.Providers;
@@ -27,6 +28,8 @@ public partial class App : Application
     private PhoneEndpoint? _phoneEndpoint;
     private PhoneSession? _phoneSession;
     private SpokenReviewPlayer? _speech;
+    private PiperSpeechSynthesizer? _ttsSynthesizer;
+    private AgentNarrationCoordinator? _narration;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -88,7 +91,8 @@ public partial class App : Application
         if (!e.Args.Contains("--no-voice"))
         {
             WidgetViewModel viewModel = _viewModel;
-            _speech = new SpokenReviewPlayer();
+            _ttsSynthesizer = new PiperSpeechSynthesizer();
+            _speech = new SpokenReviewPlayer(_ttsSynthesizer);
             _viewModel.AttachSpeech(_speech);
 
             SpokenReviewPlayer speech = _speech;
@@ -131,6 +135,7 @@ public partial class App : Application
 
             try
             {
+                _phoneEndpoint.NarrationSettingsChanged += OnPhoneNarrationSettingsChanged;
                 _phoneEndpoint.Start();
                 _viewModel.PhoneStatus =
                     $"Phone endpoint on port {_phoneEndpoint.Port} — {string.Join(", ", PhoneEndpoint.LocalAddresses())}";
@@ -139,6 +144,18 @@ public partial class App : Application
             {
                 _viewModel.PhoneStatus = $"Phone endpoint failed: {ex.Message}";
             }
+        }
+
+        if (_ttsSynthesizer != null)
+        {
+            WidgetViewModel viewModel = _viewModel;
+            _narration = new AgentNarrationCoordinator(
+                _ttsSynthesizer,
+                _phoneEndpoint,
+                () => viewModel.CurrentNarrationOptions,
+                line => Dispatcher.Invoke(() => viewModel.NarrationStatus = line));
+            viewModel.AgentRunStarting += OnAgentRunStarting;
+            viewModel.AgentRunCancelled += OnAgentRunCancelled;
         }
 
         if (manualDraft != null)
@@ -177,8 +194,19 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        if (_viewModel != null)
+        {
+            _viewModel.AgentRunStarting -= OnAgentRunStarting;
+            _viewModel.AgentRunCancelled -= OnAgentRunCancelled;
+        }
+        _narration?.Dispose();
         _speech?.Dispose();
+        _ttsSynthesizer?.Dispose();
         _phoneSession?.Dispose();
+        if (_phoneEndpoint != null)
+        {
+            _phoneEndpoint.NarrationSettingsChanged -= OnPhoneNarrationSettingsChanged;
+        }
         _phoneEndpoint?.Dispose();
         _viewModel?.Dispose();
         _pipeline?.Dispose();
@@ -187,5 +215,31 @@ public partial class App : Application
         _audioCaptureService?.Dispose();
 
         base.OnExit(e);
+    }
+
+    private void OnAgentRunStarting(object? sender, AgentRunEventArgs e)
+    {
+        try
+        {
+            _narration?.Start(e.Adapter, e.SpeakOnPhone, e.ConfirmedPrompt);
+        }
+        catch (Exception ex)
+        {
+            if (_viewModel != null) _viewModel.NarrationStatus = $"Observer unavailable: {ex.Message}";
+        }
+    }
+
+    private void OnAgentRunCancelled(object? sender, EventArgs e) => _narration?.Cancel();
+
+    private void OnPhoneNarrationSettingsChanged(object? sender, PhoneNarrationSettingsEventArgs e)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (_viewModel == null) return;
+            _viewModel.NarrationMode = string.Equals(e.Mode, "comprehensive", StringComparison.OrdinalIgnoreCase)
+                ? NarrationMode.Comprehensive
+                : NarrationMode.Concise;
+            _viewModel.NarrateToolsAndSkills = e.NarrateToolsAndSkills;
+        });
     }
 }

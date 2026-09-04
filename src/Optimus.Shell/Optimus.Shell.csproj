@@ -9,4 +9,7 @@
     <ProjectReference Include="..\Optimus.Core\Optimus.Core.csproj" />
     <ProjectReference Include="..\Optimus.Inference\Optimus.Inference.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Optimus.Core.Tests" />
+  </ItemGroup>
 </Project>

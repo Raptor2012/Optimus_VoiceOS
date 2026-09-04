@@ -185,6 +185,12 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
         JSONObject().put("t", "playbackDrained").put("generation", generation)
     )
 
+    fun setNarrationSettings(mode: String, narrateToolsAndSkills: Boolean) = sendJson(
+        JSONObject().put("t", "narrationSettings")
+            .put("mode", mode)
+            .put("narrateToolsAndSkills", narrateToolsAndSkills)
+    )
+
     /**
      * Queues 16 kHz mono PCM16, exactly the format the PC pipeline expects.
      *

@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Button
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -52,7 +53,9 @@ data class TalkUiState(
     val sending: Boolean = false,
     /** The final summary: what actually happened to the confirmed prompt. */
     val sendSummary: String = "",
-    val error: String = ""
+    val error: String = "",
+    val narrationMode: String = "concise",
+    val narrateToolsAndSkills: Boolean = false
 )
 
 @Composable
@@ -69,6 +72,8 @@ fun TalkScreen(
     onRefreshDestinations: () -> Unit = {},
     onConfirm: () -> Unit = {},
     onCancel: () -> Unit = {},
+    onNarrationModeChange: (String) -> Unit = {},
+    onNarrateToolsChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -137,6 +142,22 @@ fun TalkScreen(
         }
 
         Text(state.status, fontSize = 15.sp)
+
+        Text("AGENT NARRATION", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = state.narrationMode == "concise",
+                onClick = { onNarrationModeChange("concise") })
+            Text("Concise")
+            RadioButton(
+                selected = state.narrationMode == "comprehensive",
+                onClick = { onNarrationModeChange("comprehensive") })
+            Text("Comprehensive")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = state.narrateToolsAndSkills, onCheckedChange = onNarrateToolsChange)
+            Text("Narrate tools & skills", modifier = Modifier.padding(start = 8.dp))
+        }
 
         if (state.timings.isNotBlank()) {
             Text(

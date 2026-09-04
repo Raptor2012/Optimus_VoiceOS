@@ -42,6 +42,10 @@ class TalkViewModel : ViewModel() {
 
     fun cancelDraft() = controller.cancelDraft()
 
+    fun setNarrationMode(mode: String) = controller.setNarrationMode(mode)
+
+    fun setNarrateToolsAndSkills(enabled: Boolean) = controller.setNarrateToolsAndSkills(enabled)
+
     override fun onCleared() {
         controller.dispose()
         super.onCleared()

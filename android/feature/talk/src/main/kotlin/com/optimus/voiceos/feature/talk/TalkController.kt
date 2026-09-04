@@ -50,6 +50,16 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     fun refreshDestinations() = client.refreshDestinations()
 
+    fun setNarrationMode(mode: String) {
+        update { it.copy(narrationMode = mode) }
+        client.setNarrationSettings(mode, state.narrateToolsAndSkills)
+    }
+
+    fun setNarrateToolsAndSkills(enabled: Boolean) {
+        update { it.copy(narrateToolsAndSkills = enabled) }
+        client.setNarrationSettings(state.narrationMode, enabled)
+    }
+
     /**
      * Sends the draft exactly as displayed, to the destination the user picked.
      *
