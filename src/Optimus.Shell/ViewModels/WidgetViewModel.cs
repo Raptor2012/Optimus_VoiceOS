@@ -48,6 +48,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(IsError));
                 OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(StatusBadgeColor));
+                OnPropertyChanged(nameof(IsDraftVisible));
+                OnPropertyChanged(nameof(IsConfirmPanelVisible));
             }
         }
     }
@@ -74,6 +76,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             {
                 _draftText = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(HasDraft));
+                OnPropertyChanged(nameof(IsDraftVisible));
+                OnPropertyChanged(nameof(IsConfirmPanelVisible));
             }
         }
     }
@@ -111,6 +116,16 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public bool HasRawTranscript => !string.IsNullOrWhiteSpace(RawTranscript);
 
     public bool HasStageTimings => !string.IsNullOrWhiteSpace(StageTimings);
+
+    public bool HasDraft => !string.IsNullOrWhiteSpace(DraftText);
+
+    /// <summary>Keeps the confirmed text visible while sending and after a recoverable failure.</summary>
+    public bool IsDraftVisible =>
+        HasDraft && State is WidgetState.Confirm or WidgetState.Sending or WidgetState.Error;
+
+    /// <summary>A failed send remains retryable without another recording.</summary>
+    public bool IsConfirmPanelVisible =>
+        HasDraft && State is WidgetState.Confirm or WidgetState.Error;
 
     /// <summary>The three configured destinations. Selection is always manual.</summary>
     public ObservableCollection<DestinationOption> Destinations { get; } = new();
@@ -311,8 +326,16 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void DismissError()
     {
         ErrorMessage = string.Empty;
-        State = WidgetState.Idle;
-        StatusLine = $"Ready — Hold {HotkeyLabel} to speak";
+        if (HasDraft)
+        {
+            State = WidgetState.Confirm;
+            StatusLine = "Review the draft, then confirm";
+        }
+        else
+        {
+            State = WidgetState.Idle;
+            StatusLine = $"Ready — Hold {HotkeyLabel} to speak";
+        }
     }
 
     public void Cancel()
@@ -392,12 +415,14 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             result = await destination.Adapter.SendAsync(confirmed).ConfigureAwait(true);
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex)
         {
             result = new SendResult(SendStatus.Failed, ex.Message, 0);
         }
-
-        IsDraftEditable = true;
+        finally
+        {
+            IsDraftEditable = true;
+        }
 
         if (result.Succeeded)
         {
@@ -445,7 +470,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
             if (State == WidgetState.Error)
             {
-                State = WidgetState.Idle;
+                State = HasDraft ? WidgetState.Confirm : WidgetState.Idle;
             }
         }
         catch (ArgumentException ex)

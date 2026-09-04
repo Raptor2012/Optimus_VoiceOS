@@ -125,7 +125,7 @@
                 </StackPanel>
 
                 <!-- Cleaned draft, editable before confirmation -->
-                <StackPanel Visibility="{Binding IsConfirming, Converter={StaticResource BoolToVis}}"
+                <StackPanel Visibility="{Binding IsDraftVisible, Converter={StaticResource BoolToVis}}"
                             Margin="0,8,0,0">
                     <TextBlock Text="CLEANED DRAFT (editable)"
                                FontSize="9"
@@ -274,7 +274,7 @@
                 </StackPanel>
 
                 <!-- Confirm panel if confirm state -->
-                <Grid Visibility="{Binding IsConfirming, Converter={StaticResource BoolToVis}}"
+                <Grid Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}"
                       Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
