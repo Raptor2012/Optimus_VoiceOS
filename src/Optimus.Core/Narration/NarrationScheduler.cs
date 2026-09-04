@@ -18,12 +18,17 @@ public sealed class NarrationScheduler : INarrationScheduler
 {
     private readonly object _syncLock = new();
     private readonly Channel<SpeakableItem> _channel;
-    private readonly IncrementalSentenceSegmenter _segmenter = new();
+    private readonly IncrementalSentenceSegmenter _progressSegmenter = new();
+    private readonly IncrementalSentenceSegmenter _questionSegmenter = new();
+    private readonly IncrementalSentenceSegmenter _finalResponseSegmenter = new();
     private readonly HashSet<string> _retiredRunIds = new(StringComparer.Ordinal);
+    private readonly HashSet<EventSignature> _seenDiscreteEvents = new();
 
     private NarrationOptions _options = new();
     private string? _currentRunId;
     private long _sequenceCounter;
+
+    private readonly record struct EventSignature(NarrationEventType Type, string? Name, string Text);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="NarrationScheduler"/> class.
@@ -98,7 +103,8 @@ public sealed class NarrationScheduler : INarrationScheduler
                 _retiredRunIds.Add(_currentRunId);
                 _currentRunId = evt.RunId;
                 DrainChannel();
-                _segmenter.Reset();
+                ResetSegmenters();
+                _seenDiscreteEvents.Clear();
             }
 
             ProcessEvent(evt);
@@ -174,7 +180,8 @@ public sealed class NarrationScheduler : INarrationScheduler
                 if (string.Equals(runId, _currentRunId, StringComparison.Ordinal))
                 {
                     DrainChannel();
-                    _segmenter.Reset();
+                    ResetSegmenters();
+                    _seenDiscreteEvents.Clear();
                 }
             }
             else
@@ -184,7 +191,8 @@ public sealed class NarrationScheduler : INarrationScheduler
                     _retiredRunIds.Add(_currentRunId);
                 }
                 DrainChannel();
-                _segmenter.Reset();
+                ResetSegmenters();
+                _seenDiscreteEvents.Clear();
             }
         }
     }
@@ -197,7 +205,8 @@ public sealed class NarrationScheduler : INarrationScheduler
             _retiredRunIds.Clear();
             _currentRunId = null;
             DrainChannel();
-            _segmenter.Reset();
+            ResetSegmenters();
+            _seenDiscreteEvents.Clear();
         }
     }
 
@@ -210,7 +219,7 @@ public sealed class NarrationScheduler : INarrationScheduler
                 if (_options.Mode == NarrationMode.Comprehensive)
                 {
                     string collapsed = CodeAndLogCollapser.Collapse(evt.Text);
-                    var sentences = _segmenter.Ingest(collapsed, isFinal: !evt.IsStreamingFragment);
+                    var sentences = _progressSegmenter.Ingest(collapsed, isFinal: !evt.IsStreamingFragment);
                     foreach (string sentence in sentences)
                     {
                         PublishItem(evt.RunId, evt.Type, sentence, evt.Timestamp);
@@ -219,46 +228,67 @@ public sealed class NarrationScheduler : INarrationScheduler
                 break;
 
             case NarrationEventType.StatusTransition:
-                // Emitted in both Concise and Comprehensive modes
+                // Emitted in both Concise and Comprehensive modes, deduplicated per run
                 if (!string.IsNullOrWhiteSpace(evt.Text))
                 {
-                    PublishItem(evt.RunId, evt.Type, evt.Text.Trim(), evt.Timestamp);
+                    var signature = new EventSignature(evt.Type, evt.Name?.Trim(), evt.Text.Trim());
+                    if (_seenDiscreteEvents.Add(signature))
+                    {
+                        PublishItem(evt.RunId, evt.Type, evt.Text.Trim(), evt.Timestamp);
+                    }
                 }
                 break;
 
             case NarrationEventType.ToolCall:
             case NarrationEventType.SkillUse:
-                // Emitted only if NarrateToolsAndSkills is enabled
-                if (_options.NarrateToolsAndSkills)
+                // Emitted only if NarrateToolsAndSkills is enabled, deduplicated per run
+                if (_options.NarrateToolsAndSkills && (!string.IsNullOrWhiteSpace(evt.Text) || !string.IsNullOrWhiteSpace(evt.Name)))
                 {
-                    string speechText = FormatToolOrSkillInvocation(evt);
-                    if (!string.IsNullOrWhiteSpace(speechText))
+                    var signature = new EventSignature(evt.Type, evt.Name?.Trim(), evt.Text.Trim());
+                    if (_seenDiscreteEvents.Add(signature))
                     {
-                        PublishItem(evt.RunId, evt.Type, speechText, evt.Timestamp);
+                        string speechText = FormatToolOrSkillInvocation(evt);
+                        if (!string.IsNullOrWhiteSpace(speechText))
+                        {
+                            PublishItem(evt.RunId, evt.Type, speechText, evt.Timestamp);
+                        }
                     }
                 }
                 break;
 
             case NarrationEventType.ToolResult:
             case NarrationEventType.SkillResult:
-                // Emitted only if NarrateToolsAndSkills is enabled
-                if (_options.NarrateToolsAndSkills)
+                // Emitted only if NarrateToolsAndSkills is enabled, deduplicated per run
+                if (_options.NarrateToolsAndSkills && !string.IsNullOrWhiteSpace(evt.Text))
                 {
-                    string collapsedResult = CodeAndLogCollapser.Collapse(evt.Text);
-                    string speechText = FormatToolOrSkillResult(evt, collapsedResult);
-                    if (!string.IsNullOrWhiteSpace(speechText))
+                    var signature = new EventSignature(evt.Type, evt.Name?.Trim(), evt.Text.Trim());
+                    if (_seenDiscreteEvents.Add(signature))
                     {
-                        PublishItem(evt.RunId, evt.Type, speechText, evt.Timestamp);
+                        string collapsedResult = CodeAndLogCollapser.Collapse(evt.Text);
+                        string speechText = FormatToolOrSkillResult(evt, collapsedResult);
+                        if (!string.IsNullOrWhiteSpace(speechText))
+                        {
+                            PublishItem(evt.RunId, evt.Type, speechText, evt.Timestamp);
+                        }
                     }
                 }
                 break;
 
             case NarrationEventType.AgentQuestion:
-                // Emitted in both modes
+                // Emitted in both modes, deduplicated per run
                 if (!string.IsNullOrWhiteSpace(evt.Text))
                 {
+                    if (!evt.IsStreamingFragment)
+                    {
+                        var signature = new EventSignature(evt.Type, evt.Name?.Trim(), evt.Text.Trim());
+                        if (!_seenDiscreteEvents.Add(signature))
+                        {
+                            return;
+                        }
+                    }
+
                     string collapsedQuestion = CodeAndLogCollapser.Collapse(evt.Text);
-                    var sentences = _segmenter.Ingest(collapsedQuestion, isFinal: !evt.IsStreamingFragment);
+                    var sentences = _questionSegmenter.Ingest(collapsedQuestion, isFinal: !evt.IsStreamingFragment);
                     if (sentences.Count > 0)
                     {
                         foreach (string sentence in sentences)
@@ -274,11 +304,11 @@ public sealed class NarrationScheduler : INarrationScheduler
                 break;
 
             case NarrationEventType.FinalResponse:
-                // Emitted in both modes; finalize streaming segmentation
+                // Emitted in both modes; honor streaming segmentation
                 if (!string.IsNullOrWhiteSpace(evt.Text))
                 {
                     string collapsedResponse = CodeAndLogCollapser.Collapse(evt.Text);
-                    var sentences = _segmenter.Ingest(collapsedResponse, isFinal: true);
+                    var sentences = _finalResponseSegmenter.Ingest(collapsedResponse, isFinal: !evt.IsStreamingFragment);
                     foreach (string sentence in sentences)
                     {
                         PublishItem(evt.RunId, evt.Type, sentence, evt.Timestamp);
@@ -287,13 +317,24 @@ public sealed class NarrationScheduler : INarrationScheduler
                 break;
 
             case NarrationEventType.Error:
-                // Emitted in both modes
+                // Emitted in both modes, deduplicated per run
                 if (!string.IsNullOrWhiteSpace(evt.Text))
                 {
-                    PublishItem(evt.RunId, evt.Type, evt.Text.Trim(), evt.Timestamp);
+                    var signature = new EventSignature(evt.Type, evt.Name?.Trim(), evt.Text.Trim());
+                    if (_seenDiscreteEvents.Add(signature))
+                    {
+                        PublishItem(evt.RunId, evt.Type, evt.Text.Trim(), evt.Timestamp);
+                    }
                 }
                 break;
         }
+    }
+
+    private void ResetSegmenters()
+    {
+        _progressSegmenter.Reset();
+        _questionSegmenter.Reset();
+        _finalResponseSegmenter.Reset();
     }
 
     private static string FormatToolOrSkillInvocation(NarrationEvent evt)

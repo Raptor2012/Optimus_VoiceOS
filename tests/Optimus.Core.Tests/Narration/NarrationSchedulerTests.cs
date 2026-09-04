@@ -354,6 +354,95 @@ public sealed class NarrationSchedulerTests
         Assert.Equal("Item 2", item2.Text);
     }
 
+    [Fact]
+    public void IncompleteFinalText_IsNotEmittedUntilStreamCompletes()
+    {
+        var scheduler = new NarrationScheduler(new NarrationOptions
+        {
+            Mode = NarrationMode.Concise
+        });
+
+        // 1. Streaming final response fragment without sentence boundary
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.FinalResponse, "The final result is", isStreamingFragment: true));
+        Assert.Equal(0, scheduler.QueuedCount);
+        Assert.False(scheduler.TryDequeue(out _));
+
+        // 2. Stream concludes with full final response
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.FinalResponse, "The final result is complete.", isStreamingFragment: false));
+        Assert.Equal(1, scheduler.QueuedCount);
+
+        Assert.True(scheduler.TryDequeue(out var item));
+        Assert.NotNull(item);
+        Assert.Equal(NarrationEventType.FinalResponse, item.SourceType);
+        Assert.Equal("The final result is complete.", item.Text);
+    }
+
+    [Fact]
+    public void UnfinishedProgress_CannotLeakIntoFinalResponse()
+    {
+        var scheduler = new NarrationScheduler(new NarrationOptions
+        {
+            Mode = NarrationMode.Comprehensive
+        });
+
+        // Unfinished progress stream fragment (no sentence delimiter)
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.Progress, "Thinking about the implementation step", isStreamingFragment: true));
+        Assert.Equal(0, scheduler.QueuedCount);
+
+        // Final response arrives
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.FinalResponse, "Task is completed.", isStreamingFragment: false));
+
+        var items = DrainAll(scheduler);
+        Assert.Single(items);
+        Assert.Equal(NarrationEventType.FinalResponse, items[0].SourceType);
+        Assert.Equal("Task is completed.", items[0].Text);
+        Assert.DoesNotContain("Thinking about", items[0].Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void IdenticalUiRerenders_SpeakOncePerRun()
+    {
+        var scheduler = new NarrationScheduler(new NarrationOptions
+        {
+            Mode = NarrationMode.Comprehensive,
+            NarrateToolsAndSkills = true
+        });
+
+        // Each discrete event is enqueued twice to simulate polling/rerenders
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.StatusTransition, "Running tests"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.StatusTransition, "Running tests"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.ToolCall, "git diff", name: "git"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.ToolCall, "git diff", name: "git"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.SkillUse, "search files", name: "search"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.SkillUse, "search files", name: "search"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.ToolResult, "Clean working tree"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.ToolResult, "Clean working tree"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.SkillResult, "Found 2 files"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.SkillResult, "Found 2 files"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.Error, "Network timeout"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.Error, "Network timeout"));
+
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.AgentQuestion, "Should I proceed with refactoring?"));
+        scheduler.Enqueue(new NarrationEvent("run-1", NarrationEventType.AgentQuestion, "Should I proceed with refactoring?"));
+
+        var items = DrainAll(scheduler);
+
+        // Exactly 7 items emitted, exactly one for each unique event
+        Assert.Equal(7, items.Count);
+        Assert.Equal(NarrationEventType.StatusTransition, items[0].SourceType);
+        Assert.Equal(NarrationEventType.ToolCall, items[1].SourceType);
+        Assert.Equal(NarrationEventType.SkillUse, items[2].SourceType);
+        Assert.Equal(NarrationEventType.ToolResult, items[3].SourceType);
+        Assert.Equal(NarrationEventType.SkillResult, items[4].SourceType);
+        Assert.Equal(NarrationEventType.Error, items[5].SourceType);
+        Assert.Equal(NarrationEventType.AgentQuestion, items[6].SourceType);
+    }
+
     private static List<SpeakableItem> DrainAll(NarrationScheduler scheduler)
     {
         var list = new List<SpeakableItem>();
