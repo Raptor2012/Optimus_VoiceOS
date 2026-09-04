@@ -21,7 +21,7 @@ __pycache__/
 .venv/
 
 # Models, generated audio, and local data
-models/
+/models/
 artifacts/
 benchmarks/results/
 data/
