@@ -349,7 +349,7 @@ Record the exit code and the last 20 lines of output for each command in Evidenc
 
 ## Evidence
 
-- Commit: (recorded below after task commit)
+- Commit: `9ae3773950b73c8d197607775ba7fe3524b07e86`
 - Base commit: `b17c19cd66199b5b33260a0097b30383c421d902`
 - Commands executed:
   1. `git rev-parse HEAD`
