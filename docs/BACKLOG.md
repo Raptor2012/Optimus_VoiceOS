@@ -117,6 +117,19 @@ Build the small Jetpack Compose phone UI: push-to-talk, transcript/cleaned draft
 
 Done when ten phone-originated prompts are processed on the PC and sent to the exact visible destination only after confirmation.
 
+Status: implemented. The phone shows the raw transcript, an editable draft, the PC's destination
+list with live readiness, Confirm and Cancel, and a final summary of what actually happened.
+Confirm sends the exact text on screen to the exact destination chosen; the PC never substitutes
+its own copy of the draft, and Confirm stays disabled until a ready destination is picked, with
+the reason shown.
+
+Verified by test: exact-text delivery, no send without confirm, refusal for an unready or unknown
+destination with nothing sent anywhere, failure reported as not sent, and destinations pushed with
+readiness. Verified on the Pixel: connect, capture, and status round trip.
+
+Remaining: the ten-prompt count. It needs speech and a window bound on the PC, so it belongs to
+the user's dogfood pass.
+
 ## S006 — Dogfood and measured latency fixes
 
 Owner: Claude Opus 5; Sol reviews only blockers

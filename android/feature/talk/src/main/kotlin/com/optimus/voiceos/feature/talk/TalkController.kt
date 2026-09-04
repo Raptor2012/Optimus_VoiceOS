@@ -30,6 +30,53 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     fun setPort(port: String) = update { it.copy(port = port.filter(Char::isDigit)) }
 
+    /** The user edits the draft here; this exact text is what gets confirmed. */
+    fun setDraft(text: String) = update { it.copy(cleanedDraft = text, sendSummary = "") }
+
+    /** Destination choice is always an explicit tap. Nothing is preselected. */
+    fun selectDestination(id: String) = update { it.copy(selectedDestinationId = id, error = "") }
+
+    fun refreshDestinations() = client.refreshDestinations()
+
+    /**
+     * Sends the draft exactly as displayed, to the destination the user picked.
+     *
+     * Refuses rather than guessing when no destination is chosen or the draft is empty, and the
+     * screen only shows Sent once the PC confirms the adapter actually delivered it.
+     */
+    fun confirm() {
+        val destination = state.selectedDestinationId
+        val text = state.cleanedDraft
+
+        if (destination.isNullOrBlank()) {
+            update { it.copy(error = "Choose a destination first") }
+            return
+        }
+
+        if (text.isBlank()) {
+            update { it.copy(error = "Nothing to send") }
+            return
+        }
+
+        update { it.copy(sending = true, error = "", sendSummary = "", status = "Sending...") }
+        client.confirm(destination, text)
+    }
+
+    fun cancelDraft() {
+        client.cancel()
+        update {
+            it.copy(
+                rawTranscript = "",
+                cleanedDraft = "",
+                timings = "",
+                sendSummary = "",
+                sending = false,
+                error = "",
+                status = "Cancelled"
+            )
+        }
+    }
+
     fun connect() {
         val port = state.port.toIntOrNull()
         if (port == null || port !in 1..65535) {
@@ -74,6 +121,7 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
                 rawTranscript = "",
                 cleanedDraft = "",
                 timings = "",
+                sendSummary = "",
                 status = "Recording..."
             )
         }
@@ -103,6 +151,8 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
                     it.copy(
                         connected = false,
                         capturing = false,
+                        sending = false,
+                        destinations = emptyList(),
                         connectionLabel = "Not connected (${event.reason})",
                         status = "Disconnected"
                     )
@@ -110,6 +160,27 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             }
 
             is PcEvent.Status -> update { it.copy(status = event.line) }
+
+            is PcEvent.Destinations -> update { current ->
+                // Drop a selection that no longer exists rather than silently retargeting.
+                val stillThere = current.selectedDestinationId?.takeIf { id ->
+                    event.destinations.any { it.id == id }
+                }
+                current.copy(destinations = event.destinations, selectedDestinationId = stillThere)
+            }
+
+            is PcEvent.SendOutcome -> update {
+                it.copy(
+                    sending = false,
+                    sendSummary = if (event.ok) {
+                        "Sent to " + event.destination
+                    } else {
+                        "NOT sent to " + event.destination + ": " + event.detail
+                    },
+                    error = if (event.ok) "" else event.detail,
+                    status = if (event.ok) "Sent" else "Not sent"
+                )
+            }
 
             is PcEvent.Draft -> update {
                 it.copy(

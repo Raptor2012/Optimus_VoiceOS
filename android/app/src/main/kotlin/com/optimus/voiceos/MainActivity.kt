@@ -48,7 +48,12 @@ class MainActivity : ComponentActivity() {
                         onConnect = vm::connect,
                         onDisconnect = vm::disconnect,
                         onStartCapture = ::startCaptureWithPermission,
-                        onStopCapture = vm::stopCapture
+                        onStopCapture = vm::stopCapture,
+                        onDraftChange = vm::setDraft,
+                        onSelectDestination = vm::selectDestination,
+                        onRefreshDestinations = vm::refreshDestinations,
+                        onConfirm = vm::confirm,
+                        onCancel = vm::cancelDraft
                     )
                 }
             }

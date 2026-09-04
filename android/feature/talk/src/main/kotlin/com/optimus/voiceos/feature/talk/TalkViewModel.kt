@@ -32,6 +32,16 @@ class TalkViewModel : ViewModel() {
 
     fun stopCapture() = controller.stopCapture()
 
+    fun setDraft(text: String) = controller.setDraft(text)
+
+    fun selectDestination(id: String) = controller.selectDestination(id)
+
+    fun refreshDestinations() = controller.refreshDestinations()
+
+    fun confirm() = controller.confirm()
+
+    fun cancelDraft() = controller.cancelDraft()
+
     override fun onCleared() {
         controller.dispose()
         super.onCleared()

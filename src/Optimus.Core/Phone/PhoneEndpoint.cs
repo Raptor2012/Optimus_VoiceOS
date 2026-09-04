@@ -23,6 +23,28 @@ public sealed class PhoneConnectionEventArgs : EventArgs
     public string Remote { get; }
 }
 
+/// <summary>The phone asked to send the exact text it was showing.</summary>
+public sealed class PhoneConfirmEventArgs : EventArgs
+{
+    public PhoneConfirmEventArgs(string destinationId, string text)
+    {
+        DestinationId = destinationId;
+        Text = text;
+    }
+
+    public string DestinationId { get; }
+
+    /// <summary>
+    /// The draft as displayed on the phone at the moment the user confirmed.
+    /// </summary>
+    /// <remarks>
+    /// The PC sends this text and nothing else. It deliberately does not reuse its own copy of
+    /// the draft: the phone may have edited it, and the product rule is that what was visible is
+    /// what gets sent.
+    /// </remarks>
+    public string Text { get; }
+}
+
 public sealed class PhoneAudioEventArgs : EventArgs
 {
     public PhoneAudioEventArgs(byte[] pcm) => Pcm = pcm;
@@ -87,6 +109,15 @@ public sealed class PhoneEndpoint : IDisposable
     public event EventHandler? CaptureStopped;
 
     public event EventHandler<PhoneAudioEventArgs>? AudioReceived;
+
+    /// <summary>The phone wants the current destination list.</summary>
+    public event EventHandler? DestinationsRequested;
+
+    /// <summary>The phone confirmed a draft for sending.</summary>
+    public event EventHandler<PhoneConfirmEventArgs>? ConfirmRequested;
+
+    /// <summary>The phone discarded the draft.</summary>
+    public event EventHandler? CancelRequested;
 
     public void Start()
     {
@@ -231,10 +262,59 @@ public sealed class PhoneEndpoint : IDisposable
                 // Nothing to do; the connection itself is the state.
                 break;
 
+            case "refreshDestinations":
+                DestinationsRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case "confirm":
+                RaiseConfirm(json);
+                break;
+
+            case "cancel":
+                CancelRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
             default:
                 break;
         }
     }
+
+    /// <summary>
+    /// Parses a confirm message. A missing destination or empty text is dropped rather than
+    /// guessed at, because both are required to send anything.
+    /// </summary>
+    private void RaiseConfirm(string json)
+    {
+        string? destinationId;
+        string? text;
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            destinationId = document.RootElement.TryGetProperty("destinationId", out JsonElement d) ? d.GetString() : null;
+            text = document.RootElement.TryGetProperty("text", out JsonElement t) ? t.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(destinationId) || string.IsNullOrWhiteSpace(text))
+        {
+            SendError("Confirm needs both a destination and text.");
+            return;
+        }
+
+        ConfirmRequested?.Invoke(this, new PhoneConfirmEventArgs(destinationId, text));
+    }
+
+    /// <summary>Pushes the destination list and each one's readiness.</summary>
+    public void SendDestinations(IReadOnlyList<PhoneDestination> destinations) =>
+        SendJson(new { t = "destinations", destinations });
+
+    /// <summary>Reports the outcome of a send. This is the phone's final summary.</summary>
+    public void SendSendResult(bool ok, string destinationName, string detail) =>
+        SendJson(new { t = "sendResult", ok, destination = destinationName, detail });
 
     /// <summary>Pushes a status line to the phone. Silently no-ops when nothing is connected.</summary>
     public void SendStatus(string state, string line) =>

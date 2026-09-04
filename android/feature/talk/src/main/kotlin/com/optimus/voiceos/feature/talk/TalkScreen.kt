@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.Button
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -22,6 +25,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.optimus.voiceos.core.transport.PcDestination
+
+val TalkUiState.hasDraft: Boolean get() = cleanedDraft.isNotBlank()
+
+val TalkUiState.selectedDestination: PcDestination?
+    get() = destinations.firstOrNull { it.id == selectedDestinationId }
+
+/** Confirm is offered only with a draft and an explicitly chosen, ready destination. */
+val TalkUiState.canConfirm: Boolean
+    get() = connected && !sending && hasDraft && selectedDestination?.ready == true
 
 /** Everything the Talk screen renders. Held by [TalkController]. */
 data class TalkUiState(
@@ -34,6 +47,11 @@ data class TalkUiState(
     val rawTranscript: String = "",
     val cleanedDraft: String = "",
     val timings: String = "",
+    val destinations: List<PcDestination> = emptyList(),
+    val selectedDestinationId: String? = null,
+    val sending: Boolean = false,
+    /** The final summary: what actually happened to the confirmed prompt. */
+    val sendSummary: String = "",
     val error: String = ""
 )
 
@@ -46,6 +64,11 @@ fun TalkScreen(
     onDisconnect: () -> Unit,
     onStartCapture: () -> Unit,
     onStopCapture: () -> Unit,
+    onDraftChange: (String) -> Unit = {},
+    onSelectDestination: (String) -> Unit = {},
+    onRefreshDestinations: () -> Unit = {},
+    onConfirm: () -> Unit = {},
+    onCancel: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -124,12 +147,104 @@ fun TalkScreen(
             )
         }
 
+        if (state.sendSummary.isNotBlank()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    state.sendSummary,
+                    modifier = Modifier.padding(12.dp),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
         if (state.rawTranscript.isNotBlank()) {
             Labelled("RAW TRANSCRIPT", state.rawTranscript)
         }
 
-        if (state.cleanedDraft.isNotBlank()) {
-            Labelled("CLEANED DRAFT", state.cleanedDraft)
+        if (state.hasDraft) {
+            Text("CLEANED DRAFT (editable)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = state.cleanedDraft,
+                onValueChange = onDraftChange,
+                enabled = !state.sending,
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+
+            // Destination is always an explicit choice; nothing is preselected.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("DESTINATION", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onRefreshDestinations) { Text("Refresh", fontSize = 12.sp) }
+            }
+
+            if (state.destinations.isEmpty()) {
+                Text("No destinations reported by the PC.", fontSize = 13.sp)
+            } else {
+                state.destinations.forEach { destination ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = destination.id == state.selectedDestinationId,
+                                enabled = !state.sending,
+                                onClick = { onSelectDestination(destination.id) }
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = destination.id == state.selectedDestinationId,
+                            enabled = !state.sending,
+                            onClick = { onSelectDestination(destination.id) }
+                        )
+                        Column(modifier = Modifier.padding(start = 4.dp)) {
+                            Text(destination.name, fontSize = 14.sp)
+                            Text(
+                                destination.detail,
+                                fontSize = 11.sp,
+                                color = if (destination.ready) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.error
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onCancel,
+                    enabled = !state.sending,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Cancel") }
+
+                Button(
+                    onClick = onConfirm,
+                    enabled = state.canConfirm,
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (state.sending) "Sending..." else "Confirm & Send") }
+            }
+
+            // Say why Confirm is unavailable rather than leaving a dead button.
+            val chosen = state.selectedDestination
+            if (!state.sending) {
+                when {
+                    chosen == null -> Text("Choose a destination to enable Confirm.", fontSize = 12.sp)
+                    !chosen.ready -> Text(
+                        "${chosen.name} is not ready: ${chosen.detail}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    else -> Unit
+                }
+            }
         }
 
         if (state.error.isNotBlank()) {

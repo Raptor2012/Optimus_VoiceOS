@@ -4,8 +4,11 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 using Optimus.Core.Phone;
 using Optimus.Inference;
+using Optimus.Providers;
 
 /// <summary>
 /// Bridges the phone endpoint to the existing STT and cleanup pipeline.
@@ -19,6 +22,7 @@ public sealed class PhoneSession : IDisposable
 {
     private readonly PhoneEndpoint _endpoint;
     private readonly VoicePipeline? _pipeline;
+    private readonly DestinationRegistry? _destinations;
     private readonly Action<string, string, string>? _onDraft;
     private readonly Action<string>? _onStatus;
     private readonly object _lock = new();
@@ -31,11 +35,13 @@ public sealed class PhoneSession : IDisposable
     public PhoneSession(
         PhoneEndpoint endpoint,
         VoicePipeline? pipeline,
+        DestinationRegistry? destinations = null,
         Action<string, string, string>? onDraft = null,
         Action<string>? onStatus = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
+        _destinations = destinations;
         _onDraft = onDraft;
         _onStatus = onStatus;
 
@@ -43,6 +49,94 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CaptureStarted += OnCaptureStarted;
         _endpoint.CaptureStopped += OnCaptureStopped;
         _endpoint.AudioReceived += OnAudioReceived;
+        _endpoint.DestinationsRequested += OnDestinationsRequested;
+        _endpoint.ConfirmRequested += OnConfirmRequested;
+        _endpoint.CancelRequested += OnCancelRequested;
+    }
+
+    private void OnDestinationsRequested(object? sender, EventArgs e) => PushDestinations();
+
+    /// <summary>Sends the destination list with live readiness, so the phone shows the truth.</summary>
+    private void PushDestinations()
+    {
+        if (_destinations == null)
+        {
+            _endpoint.SendDestinations(Array.Empty<PhoneDestination>());
+            return;
+        }
+
+        List<PhoneDestination> list = _destinations.ProbeAll()
+            .Select(entry => new PhoneDestination(
+                entry.Adapter.DestinationId,
+                entry.Adapter.DisplayName,
+                entry.Status.CanSend,
+                entry.Status.Detail))
+            .ToList();
+
+        _endpoint.SendDestinations(list);
+    }
+
+    private void OnCancelRequested(object? sender, EventArgs e)
+    {
+        Interlocked.Increment(ref _utteranceGeneration);
+        _endpoint.SendStatus("idle", "Cancelled");
+        _onStatus?.Invoke("Phone cancelled the draft");
+    }
+
+    /// <summary>
+    /// Sends exactly the text the phone displayed, to exactly the destination it named.
+    /// </summary>
+    /// <remarks>
+    /// The text comes from the phone rather than from this process's copy of the draft, because
+    /// the user may have edited it there and the rule is that what was visible is what is sent.
+    /// Nothing is substituted: an unknown or unbound destination fails and says why.
+    /// </remarks>
+    private void OnConfirmRequested(object? sender, PhoneConfirmEventArgs e)
+    {
+        if (_destinations == null)
+        {
+            _endpoint.SendSendResult(false, e.DestinationId, "No destinations are configured on the PC.");
+            return;
+        }
+
+        IDestinationAdapter? adapter = _destinations.Find(e.DestinationId);
+        if (adapter == null)
+        {
+            _endpoint.SendSendResult(false, e.DestinationId, "That destination does not exist.");
+            return;
+        }
+
+        DestinationStatus status = adapter.Probe();
+        if (!status.CanSend)
+        {
+            _endpoint.SendSendResult(false, adapter.DisplayName, status.Detail);
+            PushDestinations();
+            return;
+        }
+
+        _endpoint.SendStatus("sending", $"Sending to {adapter.DisplayName}...");
+        _onStatus?.Invoke($"Phone confirmed: sending to {adapter.DisplayName}");
+
+        _ = Task.Run(async () =>
+        {
+            SendResult result;
+            try
+            {
+                var confirmed = new ConfirmedDraft(e.Text, adapter.DestinationId);
+                result = await adapter.SendAsync(confirmed).ConfigureAwait(false);
+            }
+            catch (ArgumentException ex)
+            {
+                result = new SendResult(SendStatus.Failed, ex.Message, 0);
+            }
+
+            // Sent is reported only when the adapter actually succeeded.
+            _endpoint.SendSendResult(result.Succeeded, adapter.DisplayName, result.Detail);
+            _endpoint.SendStatus(result.Succeeded ? "sent" : "error", result.Detail);
+            _onStatus?.Invoke(result.Succeeded
+                ? $"Phone prompt sent to {adapter.DisplayName}"
+                : $"Phone prompt NOT sent: {result.Detail}");
+        });
     }
 
     private void OnConnectionChanged(object? sender, PhoneConnectionEventArgs e)
@@ -61,6 +155,7 @@ public sealed class PhoneSession : IDisposable
         if (e.Connected)
         {
             _endpoint.SendStatus("idle", "Connected to PC");
+            PushDestinations();
         }
     }
 
@@ -173,6 +268,9 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CaptureStarted -= OnCaptureStarted;
         _endpoint.CaptureStopped -= OnCaptureStopped;
         _endpoint.AudioReceived -= OnAudioReceived;
+        _endpoint.DestinationsRequested -= OnDestinationsRequested;
+        _endpoint.ConfirmRequested -= OnConfirmRequested;
+        _endpoint.CancelRequested -= OnCancelRequested;
 
         lock (_lock)
         {

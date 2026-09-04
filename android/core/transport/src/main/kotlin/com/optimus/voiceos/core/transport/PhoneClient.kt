@@ -14,12 +14,17 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
+/** One destination the PC offers, with why it can or cannot send. */
+data class PcDestination(val id: String, val name: String, val ready: Boolean, val detail: String)
+
 /** What the PC told us. */
 sealed interface PcEvent {
     data class Connected(val address: String) : PcEvent
     data class Disconnected(val reason: String) : PcEvent
     data class Status(val state: String, val line: String) : PcEvent
     data class Draft(val raw: String, val clean: String, val timings: String) : PcEvent
+    data class Destinations(val destinations: List<PcDestination>) : PcEvent
+    data class SendOutcome(val ok: Boolean, val destination: String, val detail: String) : PcEvent
     data class Failure(val message: String) : PcEvent
 }
 
@@ -112,6 +117,30 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                         o.optString("timings")
                     )
                 )
+                "destinations" -> {
+                    val array = o.optJSONArray("destinations")
+                    val list = buildList {
+                        for (i in 0 until (array?.length() ?: 0)) {
+                            val d = array!!.getJSONObject(i)
+                            add(
+                                PcDestination(
+                                    d.optString("id"),
+                                    d.optString("name"),
+                                    d.optBoolean("ready"),
+                                    d.optString("detail")
+                                )
+                            )
+                        }
+                    }
+                    onEvent(PcEvent.Destinations(list))
+                }
+                "sendResult" -> onEvent(
+                    PcEvent.SendOutcome(
+                        o.optBoolean("ok"),
+                        o.optString("destination"),
+                        o.optString("detail")
+                    )
+                )
                 "error" -> onEvent(PcEvent.Failure(o.optString("message")))
                 else -> Unit
             }
@@ -123,6 +152,20 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
     fun startCapture() = sendJson(JSONObject().put("t", "startCapture"))
 
     fun stopCapture() = sendJson(JSONObject().put("t", "stopCapture"))
+
+    fun refreshDestinations() = sendJson(JSONObject().put("t", "refreshDestinations"))
+
+    /**
+     * Confirms the draft, sending the exact text currently on screen.
+     *
+     * The caller passes what the user is looking at, including any edits. Nothing on the PC
+     * substitutes its own copy.
+     */
+    fun confirm(destinationId: String, text: String) = sendJson(
+        JSONObject().put("t", "confirm").put("destinationId", destinationId).put("text", text)
+    )
+
+    fun cancel() = sendJson(JSONObject().put("t", "cancel"))
 
     /**
      * Queues 16 kHz mono PCM16, exactly the format the PC pipeline expects.

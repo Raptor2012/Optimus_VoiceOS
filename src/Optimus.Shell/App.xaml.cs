@@ -91,6 +91,7 @@ public partial class App : Application
             _phoneSession = new PhoneSession(
                 _phoneEndpoint,
                 _pipeline,
+                _destinations,
                 onDraft: (raw, clean, timings) => Dispatcher.Invoke(() =>
                     viewModel.LoadPhoneDraft(raw, clean, timings)),
                 onStatus: line => Dispatcher.Invoke(() => viewModel.PhoneStatus = line));
