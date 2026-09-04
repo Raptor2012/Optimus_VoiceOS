@@ -323,6 +323,28 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(Destinations));
     }
 
+    /// <summary>
+    /// Loads user-supplied text into the ordinary review/confirmation flow.
+    /// </summary>
+    /// <remarks>
+    /// Used by the lightweight <c>--draft</c> dogfood path so destination adapters can be
+    /// exercised without a microphone or model startup. It deliberately does not select or
+    /// bind a destination and therefore cannot send by itself.
+    /// </remarks>
+    public void LoadManualDraft(string text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+
+        BeginNewUtterance();
+        RawTranscript = text;
+        DraftText = text;
+        StageTimings = "manual draft · STT skipped · cleanup skipped";
+        ErrorMessage = string.Empty;
+        IsDraftEditable = true;
+        State = WidgetState.Confirm;
+        StatusLine = "Manual draft loaded — choose a destination, review, then confirm";
+    }
+
     public void DismissError()
     {
         ErrorMessage = string.Empty;

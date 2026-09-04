@@ -34,6 +34,7 @@ public partial class App : Application
         }
 
         bool useMock = e.Args.Contains("--mock");
+        string? manualDraft = GetOptionValue(e.Args, "--draft");
 
         _audioCaptureService = useMock ? new InMemoryAudioCapture() : new WasapiAudioCapture();
         _hotkeyService = useMock ? new MockHotkeyService() : new WindowsKeyboardHook();
@@ -46,8 +47,9 @@ public partial class App : Application
         _destinations = new DestinationRegistry();
         _viewModel.AttachDestinations(_destinations);
 
-        // --no-models runs capture only, for testing the widget without loading ~3.8 GB.
-        if (!e.Args.Contains("--no-models"))
+        // --no-models runs capture only. A manual draft also skips the ~3.8 GB model load,
+        // making destination-adapter dogfooding immediate even when the microphone is muted.
+        if (!e.Args.Contains("--no-models") && manualDraft == null)
         {
             _pipeline = new VoicePipeline();
             _viewModel.AttachPipeline(_pipeline);
@@ -77,11 +79,38 @@ public partial class App : Application
             });
         }
 
+        if (manualDraft != null)
+        {
+            _viewModel.LoadManualDraft(manualDraft);
+        }
+
         _controller.Start();
 
         var mainWindow = new MainWindow(_viewModel);
         MainWindow = mainWindow;
         mainWindow.Show();
+    }
+
+    internal static string? GetOptionValue(string[] args, string option)
+    {
+        for (int index = 0; index < args.Length; index++)
+        {
+            if (!string.Equals(args[index], option, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (index + 1 >= args.Length ||
+                string.IsNullOrWhiteSpace(args[index + 1]) ||
+                args[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return args[index + 1];
+        }
+
+        return null;
     }
 
     protected override void OnExit(ExitEventArgs e)

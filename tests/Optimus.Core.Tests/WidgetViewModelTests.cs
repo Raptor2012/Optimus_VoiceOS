@@ -100,6 +100,30 @@ public class WidgetViewModelTests
         Assert.Contains("Cancelled", vm.StatusLine);
     }
 
+    [Fact]
+    public void LoadManualDraft_UsesNormalConfirmationFlowWithoutChoosingDestination()
+    {
+        using var vm = new WidgetViewModel(action => action());
+
+        vm.LoadManualDraft("Run the focused tests.");
+
+        Assert.Equal(WidgetState.Confirm, vm.State);
+        Assert.Equal("Run the focused tests.", vm.RawTranscript);
+        Assert.Equal("Run the focused tests.", vm.DraftText);
+        Assert.True(vm.IsDraftVisible);
+        Assert.True(vm.IsConfirmPanelVisible);
+        Assert.Null(vm.SelectedDestination);
+        Assert.Contains("choose a destination", vm.StatusLine, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LoadManualDraft_RejectsEmptyText()
+    {
+        using var vm = new WidgetViewModel(action => action());
+
+        Assert.Throws<ArgumentException>(() => vm.LoadManualDraft("   "));
+    }
+
     [Theory]
     [InlineData(WidgetState.Idle, "#30D158")]
     [InlineData(WidgetState.Listening, "#FF3B30")]
