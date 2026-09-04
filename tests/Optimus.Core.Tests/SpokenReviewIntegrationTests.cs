@@ -140,6 +140,35 @@ public class SpokenReviewIntegrationTests
         }
     }
 
+    /// <summary>An edited draft cannot be sent until that exact edit has been read back.</summary>
+    [Fact]
+    public async Task EditedDraftIsRereadBeforeItCanBeSent()
+    {
+        (WidgetViewModel widget, RecordingAdapter claude) = BuildWidget();
+        using var speech = new FakeReviewPlayer();
+
+        using (widget)
+        {
+            widget.AttachSpeech(speech);
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.LoadManualDraft("Original draft.");
+            await speech.WaitUntilSpoken();
+            await Task.Delay(50);
+
+            widget.DraftText = "Edited draft.";
+            await widget.ConfirmAsync();
+            await speech.WaitUntilSpoken();
+            await Task.Delay(50);
+
+            Assert.Empty(claude.Sent);
+            Assert.Equal("Edited draft.", speech.LastDraft);
+
+            await widget.ConfirmAsync();
+            Assert.Single(claude.Sent);
+            Assert.Equal("Edited draft.", claude.Sent[0]);
+        }
+    }
+
     /// <summary>A speech failure leaves the draft on screen and the widget usable.</summary>
     [Fact]
     public async Task SpeechFailureLeavesTheWidgetUsable()

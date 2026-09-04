@@ -40,6 +40,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private string _speechStatus = string.Empty;
     private bool _isSpeakingReview;
     private string _lastSpokenKey = string.Empty;
+    private int _spokenReviewGeneration;
 
     public WidgetState State
     {
@@ -532,6 +533,21 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        // An edit or destination change invalidates the spoken review. Read the exact current
+        // pair before allowing either the button or the later voice-approval path to send it.
+        if (_speech != null)
+        {
+            string currentSpokenKey = BuildSpokenKey(destination.DestinationId, draftSnapshot);
+            if (IsSpeakingReview || !string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
+            {
+                MaybeSpeakReview();
+                StatusLine = IsSpeakingReview
+                    ? "Wait for the spoken review to finish."
+                    : "The changed draft must be read aloud before sending.";
+                return;
+            }
+        }
+
         // Re-probe now: the picker's status may be seconds old.
         destination.Status = destination.Adapter.Probe();
         if (!destination.Status.CanSend)
@@ -627,7 +643,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
         // One reading per draft and destination, so re-probing or a redundant property change
         // cannot make it speak twice.
-        string key = destination.DestinationId + "" + draft;
+        string key = BuildSpokenKey(destination.DestinationId, draft);
         if (string.Equals(_lastSpokenKey, key, StringComparison.Ordinal))
         {
             return;
@@ -637,6 +653,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
         string destinationName = destination.DisplayName;
         int generation = Volatile.Read(ref _utteranceGeneration);
+        int reviewGeneration = Interlocked.Increment(ref _spokenReviewGeneration);
 
         IsSpeakingReview = true;
         SpeechStatus = "Reading the draft aloud...";
@@ -656,6 +673,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
             _dispatchAction(() =>
             {
+                // A destination change or newer review cancelled this completion. It must not
+                // reopen capture or overwrite the state owned by the newer spoken review.
+                if (Volatile.Read(ref _spokenReviewGeneration) != reviewGeneration)
+                {
+                    return;
+                }
+
                 IsSpeakingReview = false;
 
                 // Capture reopens only after the speaker is genuinely silent.
@@ -689,6 +713,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             });
         });
     }
+
+    private static string BuildSpokenKey(string destinationId, string draft) =>
+        destinationId + "\u001f" + draft;
 
     /// <summary>Re-probes every destination and refreshes the picker.</summary>
     public void RefreshDestinations()
@@ -778,6 +805,14 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     /// </remarks>
     private int BeginNewUtterance()
     {
+        Interlocked.Increment(ref _spokenReviewGeneration);
+        _speech?.Cancel();
+        _lastSpokenKey = string.Empty;
+        if (IsSpeakingReview)
+        {
+            IsSpeakingReview = false;
+            _controller?.Start();
+        }
         _processingCts?.Cancel();
         _processingCts?.Dispose();
         _processingCts = new CancellationTokenSource();
