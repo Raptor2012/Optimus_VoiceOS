@@ -23,10 +23,12 @@ Distil-Large-v3 is explicitly a compatibility fallback: it is benchmarked and sh
 
 Four corpora, all English, all recorded or written for this project. Nothing is copied from a third-party dataset.
 
-### 2.1 Coding corpus (ASR accuracy and WER), 200 utterances
+### 2.1 Coding corpus (ASR accuracy and WER), 240 utterances plus 15 non-speech captures
 
 | Bucket | Count | Description |
 | --- | --- | --- |
+| Micro commands | 20 | Single words under 250 ms: "run", "stop", "yes", "no", "undo". Deliberate speech, recorded as such |
+| Sub-second commands | 20 | 250 ms to 1 s, for example "run the tests", "commit that" |
 | Short commands | 40 | 2 to 5 s, for example a single refactor instruction |
 | Medium instructions | 70 | 5 to 12 s, typical dictation |
 | Long instructions | 40 | 12 to 20 s, multi-clause |
@@ -35,6 +37,8 @@ Four corpora, all English, all recorded or written for this project. Nothing is 
 | Adverse | 10 | Background keyboard noise, fan noise, a second distant voice, 5 each at two noise levels |
 
 Recording conditions: the target Windows machine's built-in array microphone and one USB microphone, both at 16 kHz mono, in a normal room. Every utterance is recorded twice, once per microphone. Speaker set: the primary user plus at least two additional speakers, to avoid tuning to one voice.
+
+The two short buckets exist because short commands are the fastest and most common voice interaction, not an edge case, and because an earlier draft of the architecture excluded them from measurement by discarding anything under 250 ms. They are ordinary samples: they count toward WER, critical-token accuracy, G2, and G3 exactly like every other bucket. The corpus additionally carries **15 silent or non-speech captures** (key held with no speech, a cough, a keyboard clack) used only to verify that `NO_SPEECH_DETECTED` fires on content rather than on duration; those are scored as a separate correctness gate and are excluded from latency statistics because they produce no transcript.
 
 Each utterance carries a reference transcript and a **critical-token list**: the filenames, symbols, numbers, flags, and coding terms whose exact recognition matters. Critical-token accuracy is measured only against that list.
 
@@ -68,7 +72,7 @@ Two of the 27 exist specifically to exercise the worst interactive GPU contentio
 | `active-tts-to-hotkey` | A `P1Speech` TTS job is mid-utterance when the hotkey is pressed | G2 and G3 still pass; the preemption outcome and its wall time are recorded; the ASR lease was granted only after acknowledged cancellation or verified exit |
 | `stuck-tts-to-hotkey` | Fault injection makes the TTS runner ignore `cancel` | The lease is granted only after verified process exit; no two leases are ever concurrently live; the pathological case surfaces `GPU_SLOT_STUCK` and a failed run rather than overlapping GPU work |
 
-Both scenarios run at three utterance lengths (0.4 s, 2 s, 8 s) so the interaction between the 160 ms worst-case preemption and the 250 ms minimum utterance is measured rather than assumed.
+Both scenarios run at four utterance lengths (0.15 s, 0.4 s, 2 s, 8 s) so the interaction between `W_preempt` (60 ms) and the ASR lease wait is measured rather than assumed. The 0.15 s length is the case the architecture reasons about in `docs/performance/LATENCY_BUDGET.md` section 3: the whole utterance is buffered before the lease is granted, and the claim that `leaseWait + decode(D)` stays inside the 130 ms ASR allocation is a prediction this scenario tests. Every one of these runs counts toward G2 and G3; none is excluded for being short.
 
 ## 3. Hardware and environment conditions
 
@@ -94,10 +98,10 @@ For each candidate model in a category:
 1. **Cold measurement.** Start Core with only that candidate configured. Record process start to runner `ready`, model load time, first-inference latency, and VRAM after load. One cold run per candidate per session, 5 sessions.
 2. **Warmup.** Run 20 discard iterations across the utterance-length distribution.
 3. **Warm measurement.** Run the full corpus in a fixed pseudo-random order seeded by `seed = SHA-256(candidateId || sessionIndex)` truncated to 32 bits, so ordering is reproducible and not identical across sessions.
-4. **Repetitions.** 5 independent sessions per candidate, each preceded by a Core restart and a 120 s thermal settle. Total warm samples per candidate: 200 utterances x 2 microphones x 5 sessions = 2000 for ASR; 150 x 5 = 750 for cleanup; 60 x 5 = 300 for TTS.
+4. **Repetitions.** 5 independent sessions per candidate, each preceded by a Core restart and a 120 s thermal settle. Total warm samples per candidate: 240 utterances x 2 microphones x 5 sessions = 2400 for ASR, of which 400 are micro or sub-second commands; 150 x 5 = 750 for cleanup; 60 x 5 = 300 for TTS. The 15 non-speech captures run once per microphone per session and are scored only against the `NO_SPEECH_DETECTED` gates.
 5. **Interleaving.** Candidates are run in a rotating order across sessions (A,B,C / B,C,A / C,A,B / …) so thermal drift cannot systematically favor one candidate.
 6. **Contention run.** One additional session per candidate with a representative background load (an IDE, a browser with 10 tabs, and an idle provider CLI) to record the degradation factor. Contention runs do not decide the winner but must not exceed 1.5x the clean p95, or the candidate is flagged.
-7. **GPU contention run.** One additional session per candidate executing the `active-tts-to-hotkey` scenario from section 2.4 on every utterance, so the selected model is evaluated against the real interactive path rather than an idle GPU. Every run records the preemption outcome, the `gpu.admit` wait, and whether the interactive window was already clear at admission.
+7. **GPU contention run.** One additional session per candidate executing the `active-tts-to-hotkey` scenario from section 2.4 on every utterance, so the selected model is evaluated against the real interactive path rather than an idle GPU. Every run records the preemption outcome, `gpu.leaseWait` outstanding at `EndCapture`, `asr.backlogDrain`, and the utterance duration, so the short-utterance arithmetic in the latency budget is checked against data on every candidate.
 
 ## 5. Metrics and statistics
 
@@ -131,7 +135,10 @@ A candidate is eliminated by any gate failure regardless of speed.
 | Gate | Threshold |
 | --- | --- |
 | G2 and G3 composite p95 under `active-tts-to-hotkey` | must pass the same 250 ms and 500 ms thresholds as the idle-GPU path |
+| G2 and G3 composite p95 for the micro and sub-second buckets | must pass the same thresholds; these samples are never excluded |
 | Concurrent GPU leases observed | exactly 0 across every run, including `stuck-tts-to-hotkey` |
+| `NO_SPEECH_DETECTED` on the 15 non-speech captures | 100 percent |
+| `NO_SPEECH_DETECTED` on any bucket containing speech | exactly 0, at every duration |
 | Normalized WER on the coding corpus | at most 8 percent |
 | Critical-token accuracy | at least 97 percent |
 | Intent-changing transcription errors | exactly 0 |
@@ -201,11 +208,13 @@ Results are summarized into `docs/performance/RESULTS-<category>.md` and the sel
 
 Once a winner is selected:
 
-- The harness gains a `--regression` mode that runs a 60-utterance subset and the full golden suite in about 10 minutes.
+- The harness gains a `--regression` mode that runs a 60-utterance subset, including at least 5 micro commands and 5 sub-second commands, plus the full golden suite, in about 10 minutes.
 - Any task that touches capture, ASR, cleanup, TTS, the scheduler, or the protocol must run `--regression` and record the result in its evidence section.
 - A p95 regression above 10 percent against the recorded baseline, or any new correctness-gate failure, is a P1 finding and blocks the task.
 - The baseline is updated only by an Opus-authored ADR amendment, never by an implementation task.
 
 ## 9. Release benchmark
 
-Before release (T029), the end-to-end scenario set runs on the target machine and the Pixel 9a over both LAN and Tailscale, and the report records G1 to G4, the phone derived targets, the network RTT, the preemption outcome distribution, and the full gate table. A release requires every mandatory gate to pass on the target hardware, including G2 and G3 under `active-tts-to-hotkey` and zero observed concurrent GPU leases, with the run artifacts attached to the release audit.
+Before release (T029), the end-to-end scenario set runs on the target machine and the Pixel 9a over both LAN and Tailscale, and the report records G1 to G4 broken out by utterance-length bucket, the phone derived targets, the network RTT, the preemption outcome distribution, the `gpu.leaseWait` distribution, and the full gate table. A release requires every mandatory gate to pass on the target hardware, including G2 and G3 under `active-tts-to-hotkey`, G2 and G3 for the micro and sub-second buckets, and zero observed concurrent GPU leases, with the run artifacts attached to the release audit.
+
+If the micro bucket cannot meet G2 or G3, the resolution is a model or runtime placement change, or an explicit budget amendment authored by Claude Opus 5. Excluding the samples is not an available resolution.

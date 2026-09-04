@@ -148,7 +148,7 @@ The coding agent reads repositories, issues, and web content, so its output must
 | Screen recording and screenshots | The Android Talk screen sets `FLAG_SECURE` while a draft or confirmation is displayed. |
 | Clipboard | Optimus never copies drafts to the clipboard implicitly. |
 | History | Text history retention is user-configurable with a clear-history control; default retention is 30 days. Session titles are the only prompt-derived text in `sessions.json`, and Clear History resets them. |
-| Queued prompts | Queues are in-memory only and are never written to disk. A Core restart discards them and reports a count, not the text (ADR-005 section 6). |
+| Queued prompts | Queued prompt text, hashes, receipts, and previews are in-memory only and are never written to disk. The only durable trace is a per-session integer, `pendingQueueDepth`, which records how many prompts were pending and nothing about what they said (ADR-005 section 6). |
 | Backups | `android:allowBackup="false"` and data-extraction rules exclude all app storage. |
 | Diagnostics bundle | The diagnostics export contains counters, timings, versions, and coded events only, and is shown to the user before it is written. |
 
@@ -211,5 +211,6 @@ Every item below is a release gate in T029:
 10. Android: `allowBackup` false, `FLAG_SECURE` on draft and confirmation screens, approval key is hardware-backed P-256 requiring per-use biometric, notification content contains no draft text.
 11. Attestation policy: a desktop `LocalVerification` is refused under `RequireDeviceSignature`, refused on a non-loopback connection, refused for a mismatched `approvalId`, refused after 60 s, and refused on a second presentation.
 12. Provider credential boundary: a filesystem and process-launch recorder over a full adapter session shows no read of a provider credential path, no credential-bearing argument or environment variable, and no provider secret in any Optimus-owned file.
-13. Queue privacy: after 20 queued prompts and a forced Core restart, `sessions.json` contains no queued text or preview, every queue is empty, and each affected session reports `queueDroppedCount` exactly once.
-14. GPU exclusivity: a fault-injection run in which the TTS runner ignores `cancel` shows the ASR lease is granted only after verified process exit, never concurrently, and that the stuck path surfaces `GPU_SLOT_STUCK` rather than overlapping.
+13. Queue privacy and drop reporting: after 20 queued prompts and a forced Core restart, `sessions.json` contains no queued text, hash, receipt, or preview, every queue is empty, and each affected session reports `queueDroppedCount` once to each connecting device and not at all on a second restart. Fault injection inside both durable-write windows must yield a count greater than or equal to the number actually lost, never lower.
+14. GPU exclusivity: a fault-injection run in which the TTS runner ignores `cancel` shows the ASR lease is granted only after verified process exit, never concurrently, and that the stuck path surfaces `GPU_SLOT_STUCK` at `W_preempt` (60 ms) rather than overlapping.
+15. No duration-based rejection: a corpus of deliberate single-word commands as short as 150 ms produces transcripts, drafts, and confirmations, and appears in the G2 and G3 population; only the non-speech captures yield `NO_SPEECH_DETECTED`.

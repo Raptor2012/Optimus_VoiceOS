@@ -198,11 +198,11 @@ The device's connection identity and current capabilities.
 | `sampleRateHz` | int | Must be 16000 |
 | `inputDeviceLabel` | string? | Diagnostics only |
 
-Response `CaptureStarted { streamId, maxUtteranceSeconds, minUtteranceMs }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`.
+Response `CaptureStarted { streamId, maxUtteranceSeconds }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`.
 
-Accepting `StartCapture` opens the GPU interactive window (ADR-004 section 4): Core preempts any speech or background GPU job and bars their admission until the draft is delivered or the utterance is aborted. This is why preemption cost never lands inside a measured latency gate.
+Accepting `StartCapture` does two things in Core (ADR-004 section 4): it opens the GPU interactive window, preempting any speech or background GPU job and barring their admission until the draft is delivered; and it requests the ASR lease immediately, so decoding can begin while the key is still held. Frames that arrive before the lease is granted are buffered in Core, bounded by `capture.maxPreLeaseBufferMs` (2000 ms).
 
-`minUtteranceMs` is 250. An utterance shorter than this is an accidental key tap: it produces no transcript and no draft (see `EndCapture`).
+There is no minimum utterance duration. A short utterance is transcribed like any other; an utterance that contains no speech is rejected by the runner's voice-activity verdict, not by a clock (see `EndCapture`).
 
 #### `AudioFrame` (D2S, binary)
 
@@ -212,11 +212,13 @@ Section 4. Not a JSON message. Frames belong to the `streamId` returned by `Capt
 
 `{ streamId, reason }` where `reason` is `UserReleased` \| `UserCancelled` \| `MaxDurationReached`. `UserCancelled` discards everything and produces no draft.
 
-If the captured duration is below `minUtteranceMs` (250), Core answers `Error` with `UTTERANCE_TOO_SHORT`, discards the audio, produces no transcript and no draft, and closes the GPU interactive window. Devices render this as a return to `idle`, not as an error banner.
+If the ASR runner reports `speechDetected: false` for the utterance, Core answers `Error` with `NO_SPEECH_DETECTED`, discards the audio, produces no transcript and no draft, and closes the GPU interactive window. Devices render this as a return to `idle`, not as an error banner.
+
+This is a decision about what the audio contained, made by the runner that decoded it. Duration is never used to infer intent: a 150 ms "run" or "stop" is transcribed, drafted, confirmed, and counted in the G2 and G3 measurement population exactly like a ten-second instruction (ADR-004 section 4).
 
 #### `AudioAborted` (S2D)
 
-`{ streamId, code }` where `code` is `Reconnected` \| `FrameInvalid` \| `RateLimited` \| `RunnerFailed`. The device must discard local capture state; no draft will follow.
+`{ streamId, code }` where `code` is `Reconnected` \| `FrameInvalid` \| `RateLimited` \| `RunnerFailed` \| `LeaseUnavailable`. The device must discard local capture state; no draft will follow. `LeaseUnavailable` means Core buffered more than `capture.maxPreLeaseBufferMs` of audio without obtaining the ASR lease, which indicates a stuck GPU slot rather than a device problem.
 
 #### `Transcript` (S2D)
 
@@ -297,7 +299,7 @@ A failed send returns `Error` with a code from section 8 and `retryable: false`.
 
 `{ sessions: AgentSession[] }` per ADR-005 section 5, plus `queued: [{ sessionId, position, preview, queuedAtUtc }]` where `preview` is the first 80 characters of the confirmed text.
 
-Queues are in-memory only. After a Core restart, `queued` is always empty and the affected sessions carry `queueDroppedCount` (ADR-005 section 6). Neither `preview` nor queued prompt text is ever written to disk.
+Queued prompt content is in-memory only; neither `preview` nor queued prompt text is ever written to disk. After a Core restart `queued` is always empty, and each affected session carries `queueDroppedCount` from the durable per-session `pendingQueueDepth` integer (ADR-005 section 6). That field appears in the first `SessionList` or `SessionUpdate` a given device receives for that session in this Core run, and is omitted from every later message to that device.
 
 #### `SessionUpdate` (S2D)
 
@@ -308,7 +310,7 @@ Queues are in-memory only. After a Core restart, `queued` is always empty and th
 | `changeReason` | enum | `Created` \| `Resumed` \| `TurnStarted` \| `TurnCompleted` \| `QuestionRaised` \| `ApprovalRaised` \| `Cancelled` \| `Failed` \| `Closed` \| `QueueChanged` \| `QueueDropped` |
 | `duplicate` | bool | True when this reply was produced by envelope-id deduplication |
 | `coalesced` | bool | True when a `NewSession` was coalesced into an existing creation within 2 s (ADR-005 section 1) |
-| `queueDroppedCount` | int? | Present exactly once per session after a Core restart that discarded a queue |
+| `queueDroppedCount` | int? | The durable `pendingQueueDepth` recovered at startup. Present in the first message about this session that each connecting device receives in this Core run, and omitted thereafter. Because the durable record is written before an enqueue is acknowledged and after a dequeue is accepted, this value is never lower than the number of prompts actually lost, and after a crash may exceed it by one (ADR-005 section 6) |
 
 Sent on every session state transition.
 
@@ -419,9 +421,9 @@ D2S Hello{auth{serverChallenge, signature}}
 ### 6.1 Warm-path send
 
 ```
-D2S StartCapture                 S2D CaptureStarted{streamId, minUtteranceMs:250}
-                                 (Core preempts TTS/background GPU work here)
-D2S AudioFrame x N (binary)
+D2S StartCapture                 S2D CaptureStarted{streamId}
+                                 (Core preempts TTS/background work and takes the ASR lease)
+D2S AudioFrame x N (binary)      (decoded as they arrive, once the lease is held)
 D2S EndCapture{UserReleased}
                                  S2D Transcript{isFinal:true}
                                  S2D PromptDraft{draftId}
@@ -495,7 +497,7 @@ These are the ten states named in `PROJECT_PLAN.md`; this specification introduc
 Two clarifications inside `cleaning`, which spans from the final transcript to the issued confirmation:
 
 - `PromptDraft` does not end `cleaning`; it changes what `cleaning` renders. The card shows the draft, the raw transcript, the destination picker, and the session picker, and the user acts there. Destination selection (`SetDestination`) and session resolution (`NewSession` or `ResumeSessionRequest`) both happen in this state, because `RequestConfirmation` requires a non-null `sessionId`.
-- An utterance below `minUtteranceMs` produces `Error{UTTERANCE_TOO_SHORT}` instead of a `Transcript`, so the device returns from `listening` straight to `idle` with no visible error.
+- An utterance the runner judged to contain no speech produces `Error{NO_SPEECH_DETECTED}` instead of a `Transcript`, so the device returns from `listening` straight to `idle` with no visible error. Utterance duration never causes this.
 
 Devices **must not** invent transitions. In particular, a device **must not** move from `cleaning` to `sending` without an intervening `ConfirmationRequest` and an explicit user action, and **must not** reach `awaitingConfirmation` without a destination and a session the user chose.
 
@@ -526,8 +528,8 @@ Codes are stable within major version 1.
 | `TTS_UNAVAILABLE` | TTS runner failed | yes |
 | `SERVICE_BUSY_SETUP` | Core is in `SetupExclusive` | yes |
 | `UTTERANCE_TOO_LONG` | Exceeded `maxUtteranceSeconds` | no |
-| `UTTERANCE_TOO_SHORT` | Below `minUtteranceMs` (250); treated as an accidental tap, no draft produced | no |
-| `GPU_SLOT_STUCK` | A GPU job could not be evicted and the slot could not be granted without overlap (ADR-004 section 4) | yes |
+| `NO_SPEECH_DETECTED` | The ASR runner's voice-activity verdict over the captured audio was negative; no transcript and no draft. Never inferred from duration | no |
+| `GPU_SLOT_STUCK` | A GPU job could not be evicted within `W_preempt` (60 ms) and the slot could not be granted without overlap (ADR-004 section 4) | yes |
 
 ### Destination and session
 
@@ -582,6 +584,7 @@ T003 delivers `tests/protocol-vectors/` with these directories, consumed by both
 | `canonical/` | Canonical-encoding inputs and expected bytes, including NFC normalization and null handling |
 | `envelope/` | Valid and invalid envelopes, including strict-payload rejections |
 | `audio/` | Binary header encode and decode cases, gaps, reserved-bit violations |
+| `signatures-lows/` | Provider-shaped high-S ECDSA signatures with their normalized low-S canonical DER form, produced by both an Android-backed and a .NET-backed signer, plus negative cases for non-canonical DER (ADR-003 section 3) |
 | `negotiation/` | `Challenge`, version negotiation, `Hello` signature, challenge reuse, and resume cases |
 | `signatures/` | ECDSA P-256 with SHA-256 vectors for `optimus-hello-v1`, `optimus-welcome-v1`, `optimus-pair-v1`, and `optimus-pair-result-v1`, with fixed test key pairs, plus negative cases for non-canonical DER and high-S signatures |
 | `confirmation/` | MAC vectors for `optimus-confirm-v1` with a fixed test key, including the non-null `sessionId` requirement |

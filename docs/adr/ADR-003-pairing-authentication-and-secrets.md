@@ -50,7 +50,16 @@ Pairing mode also temporarily opens the listener on the configured non-loopback 
 
 This is a correction to an earlier draft that specified Ed25519. Ed25519 is not implementable on either side of this product: the `AndroidKeyStore` provider does not offer Ed25519 through `KeyPairGenerator`, so an Ed25519 key could not be hardware-backed or biometric-bound, and .NET 8 has no Ed25519 primitive in the framework. P-256 is offered by `AndroidKeyStore` (including StrongBox on supported devices) and by .NET `ECDsa` over CNG, so the same algorithm works on both ends with no third-party cryptography dependency.
 
-Signature verification must reject non-canonical DER and must not accept a signature whose `s` value is in the upper half of the curve order (low-S normalization), so a signature cannot be trivially mutated into a second valid encoding.
+**Low-S is produced, not merely demanded.** Neither `AndroidKeyStore` nor Windows CNG contractually returns a low-S signature, so a rule that only verifiers enforce would reject valid provider output. The obligation is therefore placed on the signer:
+
+1. Obtain the DER signature from the platform provider (`SHA256withECDSA` on Android, `ECDsa.SignData(..., DSASignatureFormat.Rfc3279DerSequence)` on .NET).
+2. DER-decode it into `(r, s)`.
+3. If `s > n/2`, replace `s` with `n - s`, where `n` is the P-256 group order `0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551`.
+4. Re-encode as canonical DER (minimal-length integers, no leading zero bytes except the single sign byte) and transmit that.
+
+Verifiers reject a signature that is not canonical DER, or whose `s` exceeds `n/2`, comparing in constant time. The normalization and validation helper is a **single shared implementation per platform**, delivered by T003 in `Optimus.Contracts` and Android `:core:protocol`, and exercised by the `signatures/` vectors with cases produced by both an Android-backed and a .NET-backed signer, including at least one signature that the raw provider returned with high `s`.
+
+This is a strict-canonicalization choice rather than an accept-both choice: one wire form per key and message means a signature has exactly one byte representation, which keeps the vectors unambiguous and removes malleability as a thing reviewers have to reason about.
 
 **TLS client stack.** The mandated Android client is **OkHttp 4.12.0**, used for both the pairing request and the WebSocket, configured with:
 
@@ -255,6 +264,7 @@ Security-relevant events are recorded in the local text event history: pairing s
 
 ## Verification
 
+- T003 delivers the shared low-S normalization and canonical-DER helper on both platforms, with vectors covering a provider-returned high-S signature normalized to the same bytes on Android and .NET, and negative vectors for non-canonical DER and unnormalized high-S.
 - T020 unit tests: proof and P-256 signature verification vectors, non-canonical DER and high-S signatures rejected, constant-time comparison, expiry, nonce replay within and across connections, challenge mismatch, challenge reuse on the same connection, revoked device, and rate-limit lockout.
 - T020 integration test: full pair, verification-code match, connect, revoke, reconnect refused with `4403`.
 - T004 test: `localToken` presented on a non-loopback connection is rejected with `4401`.

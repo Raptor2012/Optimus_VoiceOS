@@ -28,7 +28,7 @@ Capture -> Transcript -> CleanedDraft -> [user selects destination] -> Confirmat
 
 - A `PromptDraft` alone is never sendable. It carries no confirmation material.
 - Core issues a `ConfirmationRequest` only when a destination is explicitly set for the draft. If no destination is set, `RequestConfirmation` fails with `DESTINATION_REQUIRED`. Core never picks a default, never reuses "the last one" implicitly, and never infers a destination from prompt content.
-- **`RequestConfirmation.sessionId` is required and must be non-null.** A null or unknown `sessionId` fails with `SESSION_REQUIRED`. Core never creates a provider session as a side effect of asking for a confirmation.
+- **`RequestConfirmation.sessionId` is required and must be non-null.** Exactly one code per input, with no overlap: `SESSION_REQUIRED` if and only if the field is absent or null; `SESSION_NOT_FOUND` for a value that is present but unknown, `Closed`, or bound to a different destination. Core never creates a provider session as a side effect of asking for a confirmation.
 - The destination shown in the `ConfirmationRequest` is the destination that is validated at send time. A destination change after issuance invalidates the confirmation.
 - Editing the draft on the device invalidates the confirmation, because the confirmation binds the text hash. The device must call `RequestConfirmation` again, and the new confirmation renders the edited text back to the user.
 
@@ -39,7 +39,7 @@ Capture -> Transcript -> CleanedDraft -> [user selects destination] -> Confirmat
 3. If none exists, or the user wants a fresh context, the user presses New Session and the device sends `NewSession { destinationId }`; Core creates the session and returns its `sessionId` in `SessionUpdate`.
 4. Only then may the device send `RequestConfirmation` with that non-null `sessionId`.
 
-Core validates that the `sessionId` exists, belongs to `destinationId`, and is not `Closed`; otherwise `SESSION_NOT_FOUND`. The first prompt to a never-used destination therefore costs one explicit New Session action, which is exactly the visible choice the invariant demands.
+Core validates a present `sessionId` in one step: it must exist, belong to `destinationId`, and not be `Closed`; any failure is `SESSION_NOT_FOUND`. An absent field never reaches that step and is always `SESSION_REQUIRED`. The first prompt to a never-used destination therefore costs one explicit New Session action, which is exactly the visible choice the invariant demands.
 
 **Concurrent `NewSession`.** Two safeguards, in this order:
 
@@ -153,11 +153,11 @@ AgentSession {
   state,                   // Idle | Busy | AwaitingAnswer | AwaitingApproval | Failed | Closed
   createdAtUtc, lastActivityAtUtc,
   title,                   // derived from the first prompt, user-editable
-  queueDepth
+  pendingQueueDepth        // integer only; durable; never any text
 }
 ```
 
-- Sessions persist as **metadata only** in `%LOCALAPPDATA%\Optimus\state\sessions.json`. The persisted fields are exactly those listed above plus `title`. No prompt bodies, no queued prompt text, no queue previews, no provider output, no audio. `queueDepth` is recomputed at runtime and is written as `0`.
+- Sessions persist as **metadata only** in `%LOCALAPPDATA%\Optimus\state\sessions.json`. The persisted fields are exactly those listed above. No prompt bodies, no queued prompt text, no queue previews, no provider output, no audio. `pendingQueueDepth` is a bare integer: it says how many prompts were waiting, never which ones.
 - The `title` is the one exception that derives from prompt text: it is the first 60 characters of the first prompt, user-editable, and is covered by the history retention setting and by Clear History, which resets titles to `Session <n>`. This is called out rather than hidden, because a title is user-visible text derived from a prompt.
 - Sessions survive Core restarts and are re-attached with `ResumeSessionRequest`. A provider that cannot resume returns `SessionNotFound`; Core then marks the session `Closed` and tells the user, rather than silently creating a new one.
 - A session is discarded only by an explicit `NewSession` action. Nothing else, including a provider crash, a reconnect, or a destination refresh, ends a session.
@@ -188,10 +188,19 @@ When the target session is not `Idle`, a `Send` is refused with `SESSION_BUSY` a
 - The confirmation is validated at enqueue time. Once enqueued, the item carries its `ConfirmationReceipt` and is **not** re-checked for expiry, because the user already confirmed that exact text for that exact session; expiring it later would silently drop a confirmed intent.
 - Queued items are visible and individually removable from the Sessions screen. Removing one is not a send.
 - On session `Failed` or `Closed`, the queue is discarded and the user is told how many items were dropped.
-- **The queue is in-memory only and never persisted.** Queued prompt text and the 80-character preview exist in Core memory and in device UI state, and nowhere else. Nothing about a queued item is written to `sessions.json`, to history, or to any other file.
-- **A Core restart drops every queue.** Session metadata still resumes, and the affected sessions carry `queueDroppedCount` in the first `SessionUpdate` after restart so each device can show "3 queued prompts were discarded when the service restarted". The count is a number, not the text. Devices must not re-send from a local copy; a dropped item requires a fresh draft and a fresh confirmation.
+- **Queued prompt content is in-memory only and is never persisted.** Queued prompt text and the 80-character preview exist in Core memory and in device UI state, and nowhere else. No queued item's text, hash, receipt, or preview is written to `sessions.json`, to history, or to any other file.
+- **A Core restart drops every queue**, because the content that would be needed to run it is gone. Session metadata still resumes.
 
-This is the deliberate resolution of a conflict between two product requirements. Durable queues would mean writing confirmed prompt bodies to disk, which contradicts the storage rule above and the privacy position in `docs/security/THREAT_MODEL.md` that prompt content is not persisted beyond the opt-in text history. Losing a queue on a restart costs the user a re-dictation of at most five prompts, in a situation that is already visible to them. Persisting prompt bodies would cost every user a permanent on-disk record of their prompts. If durable queues later prove product-critical, they require an ADR amendment defining opt-in, encryption, retention, deletion, crash-dump, backup, and threat-model behavior; they must not arrive as an implementation convenience.
+**How the drop is reported, and why that is implementable.** An earlier draft promised an exact `queueDroppedCount` after a restart while persisting nothing at all, which is not a contract a process can honour: the only evidence was destroyed with the memory that held it. The count therefore has its own durable record, containing no prompt content:
+
+- `pendingQueueDepth` is a per-session integer in `sessions.json`, maintained transactionally as the queue changes.
+- **Write ordering, chosen so the record can never under-report a loss.** On enqueue, the increment is made durable *before* Core sends `SendResult`, so a device is never told an item is queued unless the durable record already counts it. On dequeue, the decrement is made durable *after* the adapter has accepted the send. A crash inside either window therefore leaves `pendingQueueDepth` at most one higher than the number of prompts actually lost, never lower. Over-reporting is recoverable by the user, who can look at the session; under-reporting would tell them nothing was lost when something was.
+- **Startup recovery, before any device is accepted.** Core reads each session's `pendingQueueDepth`, copies non-zero values into an in-memory `queueDroppedCount` for this run, writes `0` back, and flushes. Only then does the listener start. The reset is therefore atomic with respect to devices, and a second restart cannot re-report the same loss.
+- **Delivery, exactly once per device.** For the lifetime of this Core run, the first `SessionList` or `SessionUpdate` that each connecting device receives for an affected session carries `queueDroppedCount`; subsequent messages to that device omit it. Both a phone and a desktop that connect after the restart each learn once, and neither learns twice.
+- A clean shutdown uses the same path as a crash: the last durable depth is what startup reports. There is no separate clean-shutdown behavior to get wrong.
+- Devices must not re-send from a local copy. A dropped item requires a fresh draft and a fresh confirmation.
+
+This is the deliberate resolution of a conflict between two product requirements. Durable queues would mean writing confirmed prompt bodies to disk, which contradicts the storage rule above and the privacy position in `docs/security/THREAT_MODEL.md` that prompt content is not persisted beyond the opt-in text history. A bare integer is not prompt content: it reveals that some number of prompts were pending, and nothing about what they said. Losing a queue on a restart costs the user a re-dictation of at most five prompts, in a situation they can now see. If durable queue *content* later proves product-critical, it requires an ADR amendment defining opt-in, encryption, retention, deletion, crash-dump, backup, and threat-model behavior; it must not arrive as an implementation convenience.
 
 **Steer.**
 
@@ -306,7 +315,9 @@ Provider text (`AgentEvent`, question text, approval `title` and `detail`) is tr
 - **Long-lived confirmations (10 minutes or more).** Rejected: a draft the user read ten minutes ago is not a current intent. 120 s matches the observed read-and-confirm interaction and is renewable with one tap.
 - **Auto-queueing when a session is busy.** Rejected: it converts a decision the user must make into an inference, which the invariants forbid.
 - **Allowing `RequestConfirmation` with a null `sessionId` to imply a new session.** Rejected: it makes provider-session creation reachable from a stale or buggy client without the user ever choosing New Session, which defeats the requirement that sessions persist until the user explicitly ends them. The cost is one explicit action on first use of a destination, which is the visible choice the product wants anyway.
-- **Durable, disk-backed prompt queues.** Rejected: the only way a queue survives a restart is by persisting confirmed prompt bodies, which contradicts both the session-storage rule and the privacy position that prompt content is not persisted beyond the opt-in history. Queues are in-memory and are reported as dropped.
+- **Durable, disk-backed prompt queues.** Rejected: the only way a queue survives a restart is by persisting confirmed prompt bodies, which contradicts both the session-storage rule and the privacy position that prompt content is not persisted beyond the opt-in history. Queue content is in-memory and is reported as dropped.
+- **Reporting the drop with no durable record at all.** Rejected as unimplementable: the count cannot be reconstructed from memory the restart destroyed. A bare per-session integer carries the count without carrying any prompt content.
+- **A generic "some queued prompts were discarded" notice with no count.** Workable and marginally simpler, but it tells the user less than a single integer costs, and the integer is not prompt content. Rejected in favour of the exact durable count.
 - **Re-validating queued confirmations for expiry at dequeue.** Rejected: it would silently drop confirmed intent after the user was told the prompt was queued.
 - **Biometric on every approval.** Rejected: it trains users to authenticate reflexively. Reserving it for `Consequential` keeps the prompt meaningful.
 - **Describing the Windows Hello result as an attestation token.** Rejected as factually wrong: `UserConsentVerifier` signs nothing. The desktop kind is named `LocalVerification`, its trust boundary is stated, and once a phone is paired the default policy routes consequential decisions to the phone where a real signature exists.
@@ -320,18 +331,19 @@ Provider text (`AgentEvent`, question text, approval `title` and `detail`) is tr
 - Because `K_conf` is per-Core-start, a Core restart during confirmation forces a re-confirmation. Intended.
 - Adapters cannot be given a convenience "send text" entry point without breaking the type contract, which keeps future adapter work honest.
 - The first prompt to a new destination requires an explicit New Session tap. This is one extra action, and it is the action the invariant is about.
-- A Core restart discards queued prompts. Users see a count, not a silent loss, and session context still resumes.
+- A Core restart discards queued prompts. Users see a count, not a silent loss, and session context still resumes. The count is durable and is deliberately biased to over-report by at most one after a crash, because telling a user that nothing was lost when something was is the worse failure.
 - Desktop consequential approvals are weaker than phone approvals, and the product says so instead of implying parity.
 
 ## Verification
 
 - T019 unit tests cover each of the ten `SendAction` checks with a dedicated negative case, plus: concurrent double-send admits exactly one; tampered `displayedText` by one character fails check 6; destination swap fails check 7; confirmation from a second device fails check 8; three failed attempts invalidate the entry.
-- T019 tests assert `RequestConfirmation` with a null, unknown, closed, or wrong-destination `sessionId` fails with `SESSION_REQUIRED` or `SESSION_NOT_FOUND`, and that no provider session is created as a side effect of any confirmation request.
+- T019 tests assert one exact code per input: an absent or null `sessionId` fails with `SESSION_REQUIRED`; an unknown, `Closed`, or wrong-destination `sessionId` fails with `SESSION_NOT_FOUND`. Each of the four cases is its own negative vector, and no provider session is created as a side effect of any confirmation request.
 - T018 tests assert that two `NewSession` requests with different envelope ids within 2 s produce one session with `coalesced: true`, and that the same envelope id produces `duplicate: true`.
 - T005 and T022 tests assert that the rendered confirmation string and the echoed `displayedText` come from the same immutable view model instance, and that no re-formatting occurs between them.
 - T019 test asserts a `Send` confirmation cannot be redeemed as `Steer` or `Queue`.
 - T018 tests cover queue FIFO, `QUEUE_FULL`, queue drop on `Failed`, single in-flight steer, `STEER_MISSED` requiring a new confirmation, and session metadata persistence across a Core restart.
-- T018 and T024 tests assert that `sessions.json` after a restart contains no queued prompt text and no preview, that every queue is empty, and that each affected session reports a non-zero `queueDroppedCount` exactly once.
+- T018 and T024 tests assert that `sessions.json` contains no queued prompt text, hash, receipt, or preview at any point, that every queue is empty after a restart, and that each affected session reports its `queueDroppedCount` exactly once per connecting device and never on a second restart.
+- T018 tests the write ordering directly by faulting the process inside each window: killed between the durable increment and the `SendResult`, and killed between the adapter accepting a send and the durable decrement. Both must report a count greater than or equal to the number of prompts actually lost, and the test asserts the count is never lower.
 - T023 instrumented test asserts a `Consequential` approval with `attestationKind: None` is rejected with `APPROVAL_ATTESTATION_REQUIRED`; that a `DeviceSignature` produced for a different `approvalId`, a different `approvalNonce`, or a different connection challenge fails check 9; and that a replayed `ApprovalResponse` gets `APPROVAL_ALREADY_USED`.
 - T020 and T023 tests assert `LocalVerification` is refused on a non-loopback connection and refused entirely under `RequireDeviceSignature` with `APPROVAL_ATTESTATION_NOT_PERMITTED`.
 - T016 and T017 adapter tests feed hostile provider output containing control characters, bidirectional overrides, Markdown, and instruction-like text, and assert no state transition occurs and the rendered and spoken strings are sanitized and capped.

@@ -88,7 +88,8 @@ Manually verify every referenced path and cross-document link. Record all checks
 
 - Base commit: `fdca807` (`chore: establish multi-model project workflow`)
 - Round 1 commit: `27d065c`, containing every deliverable.
-- Round 2 commit: `a1ddef4` - the correction commit carrying every change described under "Round 2 corrections" below. The only later commit on this branch is the one that writes this hash into the evidence, so Sol should review the branch head against the base commit.
+- Round 2 commit: `a1ddef4`, carrying every change described under "Round 2 corrections" below.
+- Round 3 commit: the correction commit recorded under "Round 3 corrections" below. Sol should review the branch head against the base commit.
 
 ### Deliverables produced
 
@@ -207,13 +208,65 @@ Results:
 - The 250 ms minimum utterance is derived from the 160 ms worst-case preemption plus margin. It is a design value; T011 measures the actual short-tap rate so an unexpectedly high number is visible rather than hidden.
 - Round 1 limitations recorded above still stand unchanged: latency figures are allocations rather than measurements, and model winners remain unselected pending target-hardware results.
 
+### Round 3 corrections (response to `reviews/T001-sol-round2.md`)
+
+Both P1 findings and both P2 precision issues are resolved. The two P1 findings were replacement designs from round 2 that did not survive contact with implementability; each is replaced by a design whose steps a process can actually execute.
+
+| Finding | Resolution | Documents changed |
+| --- | --- | --- |
+| P1-1 Queue-drop count could not survive the restart that destroyed its evidence | The count now has its own durable record containing no prompt content: a per-session integer `pendingQueueDepth` in `sessions.json`. Write ordering is specified and biased so the record can never under-report a loss: the increment is durable before `SendResult` is sent, the decrement is durable after the adapter accepts the send, so a crash leaves the count at most one high, never low. Startup reads the values, copies them into memory, writes `0` back, and flushes **before the listener starts**, so the reset is atomic with respect to devices and a second restart cannot re-report. Delivery is once per connecting device per Core run, not "once" globally, which is what makes it testable with two devices. Queued text, hashes, receipts, and previews remain memory-only. | ADR-005 sections 5, 6, alternatives, consequences, verification; ADR-001 section 4; `WIRE_PROTOCOL.md` `SessionList`, `SessionUpdate`; `THREAT_MODEL.md` T8, release gate 13; `BACKLOG.md` T018, T024; `ARCHITECTURE.md` |
+| P1-2 ASR could not both stream during capture and acquire its lease at release | The ASR job is now admitted at `StartCapture` and holds the lease until its `result`, which is what streaming decode actually requires. Frames arriving before the grant are buffered in Core, bounded by `capture.maxPreLeaseBufferMs` (2000 ms), overflowing to `AudioAborted { LeaseUnavailable }`. Cleanup queues behind ASR, which the sequential budget already assumed. Latency segment 2.3 becomes final-frame dispatch to an already-leased runner, and 2.4 becomes finalization including any outstanding lease wait and backlog drain. | ADR-004 sections 2, 3, 4, 5, alternatives, consequences, verification; `LATENCY_BUDGET.md` sections 2, 3, 4, 7, 8; `WIRE_PROTOCOL.md` `StartCapture`, `AudioAborted`, sequence 6.1; `ARCHITECTURE.md`; `BACKLOG.md` T007, T008 |
+| P1-2 (b) Short utterances were discarded by duration | The 250 ms rule and `UTTERANCE_TOO_SHORT` are removed entirely. Rejection is now content-based: the ASR runner returns `speechDetected` and `voicedMs` on every job, and only a negative verdict yields `NO_SPEECH_DETECTED`. Any utterance containing speech is transcribed, drafted, confirmed, and counted in G2 and G3 at any duration. The corpus gains a 20-utterance micro bucket (single words under 250 ms) and a 20-utterance sub-second bucket, both gated at the same thresholds, plus 15 non-speech captures used only to test the verdict. The budget arithmetic is stated rather than dodged: for `D < W_preempt` the work at release is `W + decode(D)` with both terms under 60 ms, which fits the existing 130 ms ASR allocation because a shorter utterance carries proportionally less audio. | ADR-004 section 4, alternatives, consequences, verification; `LATENCY_BUDGET.md` sections 3, 8; `BENCHMARK_PLAN.md` sections 2.1, 2.4, 4, 6.1, 8, 9; `WIRE_PROTOCOL.md` `StartCapture`, `EndCapture`, state machine, error registry; `THREAT_MODEL.md` release gate 15; `BACKLOG.md` T008, T011, T028; `ARCHITECTURE.md` |
+| P1-2 (c) Escalation clock was self-inconsistent | One bound, named once and quoted everywhere: `W_preempt` = 60 ms, composed of a 20 ms acknowledgement deadline and a 40 ms verified-exit budget, with `GPU_SLOT_STUCK` declared at exactly that same 60 ms. There is no longer a gap between the stated worst case and the point of declared failure. The 20 ms acknowledgement is stated as a requirement on the only preemptible paths, `P1Speech` and `P2Background`, met by a dedicated control-reader thread; non-preemptive cancellation keeps its 100 ms and 500 ms path because nothing waits for the slot. | ADR-004 sections 4, 5, alternatives, consequences, verification; `LATENCY_BUDGET.md` sections 2, 3, 8; `BENCHMARK_PLAN.md` section 2.4; `WIRE_PROTOCOL.md` error registry; `THREAT_MODEL.md` release gate 14; `BACKLOG.md` T007 |
+| P2-1 Low-S was verified but never produced | The obligation moves to the signer. A four-step normalization is specified with the exact P-256 order, delivered as one shared helper per platform by T003, exercised by a new `signatures-lows/` vector directory carrying provider-shaped high-S signatures normalized identically by an Android-backed and a .NET-backed signer. Strict canonicalization is kept deliberately over accept-both, so one key and message yield exactly one byte representation. | ADR-003 section 3, verification; `WIRE_PROTOCOL.md` vectors; `BACKLOG.md` T003 |
+| P2-2 Two codes for an unknown session | One code per input, with no overlap: `SESSION_REQUIRED` if and only if the field is absent or null, `SESSION_NOT_FOUND` for present but unknown, `Closed`, or wrong-destination. The verification text now names four distinct negative vectors instead of permitting either code. | ADR-005 sections 1, verification; `BACKLOG.md` T019 |
+
+One consequential rename was made while propagating: the runner heartbeat field `queueDepth` became `jobQueueDepth`, because `AgentSession.queueDepth` was replaced by `pendingQueueDepth` and two unrelated fields sharing a name across the runner and session layers would be a genuine source of confusion.
+
+### Round 3 commands and results
+
+```
+git log --oneline -6
+git show --stat 969a032
+git show 969a032:reviews/T001-sol-round2.md
+grep -rn "minUtteranceMs|UTTERANCE_TOO_SHORT|160 ms|accidental tap|queueDepth|gpu.admit" docs tasks
+grep -rn "W_preempt|60 ms|20 ms acknowledg|250 ms" docs
+grep -rhoE "ADR-00[1-5] section [0-9]+" docs tasks | sort -u
+grep -oE "^### [0-9]+\." docs/adr/ADR-00*.md
+python  (error-code audit: codes used across docs and tasks against the registry)
+git add -A
+git diff --check
+git diff --cached --check
+git status --short
+```
+
+Results:
+
+- Stale-design sweep: no occurrence of `minUtteranceMs`, `UTTERANCE_TOO_SHORT`, the 160 ms bound, or "accidental tap" remains in `docs/`. The only surviving mentions of the removed design are the explicit rejection paragraphs in ADR-004, which exist so a future reader knows the option was considered and why it was wrong, and the round-2 record in this file, which is left accurate as a historical entry.
+- Clock consistency: `W_preempt` = 60 ms is the only preemption bound quoted in ADR-004, `LATENCY_BUDGET.md`, `BENCHMARK_PLAN.md`, and `WIRE_PROTOCOL.md`. The 100 ms and 500 ms figures survive only on the non-preemptive cancellation path, where the ADR states why a longer window cannot cause overlap.
+- Section-reference audit: every `ADR-00N section M` reference resolves to an existing numbered section. No renumbering was needed this round.
+- Error-code audit: `UTTERANCE_TOO_SHORT` was removed from the registry and every use; `NO_SPEECH_DETECTED` replaces it. The one remaining occurrence in this file is inside the round-2 record, which describes what round 2 did and is deliberately not rewritten.
+- Latency arithmetic re-verified after the lifecycle change. Only the meaning of segments 2.3 and 2.4 changed, not their values, so G1 42+8=50, G2 190+20+25+15=250, G3 455+45=500, G4 187+13=200, phone LAN 470+30=500, and Tailscale 510+50=560 all still hold.
+- Corpus arithmetic re-verified after adding buckets: 20+20+40+70+40+25+15+10 = 240 utterances, and the per-candidate sample count in section 4 was updated from 2000 to 2400 to match. The 15 non-speech captures are counted and scored separately.
+- `git diff --check` and `git diff --cached --check`: no output, exit code 0.
+- `git status --short`: only files under `docs/` and `tasks/` modified. No build output, secrets, models, audio, or benchmark output.
+
+### Round 3 known limitations
+
+- The claim that a sub-60 ms utterance finishes inside the 130 ms ASR allocation is arithmetic over the gate-mandated RTF plus fixed overhead, not a measurement. `BENCHMARK_PLAN.md` section 2.4 now runs the contention scenarios at 0.15 s specifically to test it, and `gpu.leaseWait` is recorded on every run. If the arithmetic is wrong, the resolution is model or runtime placement, or an explicit budget amendment; excluding the sample is no longer an available answer.
+- The 20 ms preemptive acknowledgement is a real constraint on how the TTS and background loops are written, not a free parameter. It is called out in ADR-004 consequences and in the T007 and T014 gates. If a selected TTS runtime cannot meet it, that is an Opus escalation.
+- `pendingQueueDepth` can over-report by one after a crash inside a write window. This is deliberate and stated: telling a user that nothing was lost when something was is the worse failure. The bias direction is asserted by fault-injection tests in T018.
+- Round 1 and round 2 limitations still stand: latency figures remain allocations rather than measurements, model winners remain unselected pending target-hardware results, and the OkHttp and `AndroidKeyStore` paths remain specified from documented platform behavior rather than demonstrated on the Pixel 9a.
+
 ## Review history
 
 - Round 1: `reviews/T001-sol.md`
 - Reviewed commit: `122cbbf`
 - Verdict: `CHANGES_REQUIRED`
 - Blocking findings: Android/Windows approval primitives, Android TLS-exporter feasibility, queue privacy contradiction, explicit-session enforcement, GPU preemption/latency consistency, and provider credential ownership.
-- Round 2: corrections committed on this branch. All six P1 findings and the one P2 finding are addressed as recorded above. Awaiting re-review by GPT-5.6 Sol against the new branch head.
+- Round 2: corrections committed on this branch. All six round-1 P1 findings and the round-1 P2 finding were addressed.
+- Round 2 review: `reviews/T001-sol-round2.md`, reviewed commit `7d72be1`, verdict `CHANGES_REQUIRED`. Five round-1 findings confirmed resolved; two replacement designs (queue-drop reporting, ASR lease lifecycle and short-utterance policy) carried blocking contradictions, plus two precision issues.
+- Round 3: corrections committed on this branch. Both P1 findings and both P2 findings are addressed as recorded above. Awaiting round-3 review by GPT-5.6 Sol against the new branch head.
 - Round 2 review: `reviews/T001-sol-round2.md`
 - Reviewed branch head: `7d72be1`
 - Verdict: `CHANGES_REQUIRED`

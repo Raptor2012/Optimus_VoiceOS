@@ -32,7 +32,7 @@ From `PROJECT_PLAN.md`:
 | 1.5 | Reserve | | 8 ms | |
 | | **Total** | | **50 ms** | |
 
-Entering the GPU interactive window happens here too: accepting `StartCapture` preempts any TTS or background GPU job and bars their admission until the draft is delivered (ADR-004 section 4). Preemption runs concurrently with segments 1.3 and 1.4 and does not gate capture start, so it contributes nothing to G1. Its worst case, 160 ms, is absorbed while the user speaks.
+Two GPU-side actions start here and neither gates capture start: Core opens the interactive window, preempting any TTS or background job, and requests the ASR lease so decoding can begin while the key is held (ADR-004 section 4). Both run concurrently with segments 1.3 and 1.4, so they contribute nothing to G1. The preemption bound `W_preempt` is 60 ms and is absorbed while the user speaks.
 
 Design notes that make this achievable:
 
@@ -46,8 +46,8 @@ Design notes that make this achievable:
 | --- | --- | --- | --- | --- |
 | 2.1 | Capture finalization: stop, drain WASAPI, flush tail frames | Shell | 25 ms | `capture.finalize`, starts at key-up, ends when the last `AudioFrame` is queued |
 | 2.2 | Transport of the final frames plus `EndCapture` (loopback) | Shell to Core | 10 ms | `transport.uplinkTail`, ends when Core has the frame carrying `final` |
-| 2.3 | ASR job admission: GPU lease acquisition and job dispatch | Core | 10 ms | `gpu.admit(asr)`, from `AcquireAsync` call to runner `job` frame written |
-| 2.4 | ASR final decode beyond what streaming already consumed | ASR runner | 130 ms | `asr.finalize`, runner-reported `computeMs` plus pipe round trip |
+| 2.3 | Final-frame dispatch to the already-leased ASR runner | Core | 10 ms | `asr.finalDispatch`, from `EndCapture` handling to the `final` frame written on the pipe |
+| 2.4 | ASR finalization: any outstanding lease wait, any undrained buffered backlog, and the tail decode | Core + ASR runner | 130 ms | `asr.finalize`, from the `final` frame to `result`; decomposed by the harness into `gpu.leaseWait`, `asr.backlogDrain`, and runner `computeMs` |
 | 2.5 | Normalization, glossary application, punctuation policy | Core | 15 ms | `text.normalize` |
 | | **Subtotal to final transcript in Core** | | **190 ms** | |
 | 2.6 | `Transcript` control frame delivery to the device | Core to Shell | 20 ms | `transport.downlink`, ends at device receive |
@@ -58,7 +58,14 @@ Design notes that make this achievable:
 
 Segment 2.4 assumes streaming ASR: audio is fed to the runner during capture, so only the tail plus final decoding remains at key-up. This is why the 20 s utterance limit in G2 does not change the budget; the streaming portion is absorbed during speech. The benchmark plan verifies this by reporting 2.4 against utterance duration and failing the model if the slope is not flat.
 
-**Why 10 ms is enough for segment 2.3.** The GPU slot is single-threaded and preemption can cost up to 160 ms (ADR-004 section 4 rule 2), which would not fit here. It does not need to: the slot is cleared when the interactive window opens at hotkey press, so by hotkey release the ASR job admits into a free slot and the measured wait is a lease handoff, not an eviction. The only case where an eviction could still be in progress at release is an utterance shorter than the 160 ms worst case, and utterances below 250 ms are rejected as accidental taps with `UTTERANCE_TOO_SHORT`, producing no draft and therefore no G2 or G3 sample. The harness records `gpu.admit` wait and the preemption outcome on every run, so a violation of this reasoning shows up as data rather than as an unexplained tail.
+**Where GPU admission went.** There is no ASR admission segment at release, because the ASR job is admitted at capture *start* and holds its lease for the whole utterance (ADR-004 section 4, "ASR lease lifecycle"). Segment 2.3 is now only the dispatch of the final frame to a runner that is already decoding. This is what makes the streaming assumption in 2.4 implementable: a runner cannot consume audio during capture without holding the lease.
+
+**Short utterances are inside the budget, not excluded from it.** Let `D` be the utterance duration and `W` the lease wait still outstanding at `EndCapture`. Two cases, and both are measured:
+
+- `D >= W_preempt` (60 ms): the lease was granted before the user stopped speaking, so `W = 0`, the backlog has drained, and 2.4 is a tail decode. This covers every ordinary utterance.
+- `D < W_preempt`: the whole utterance is still buffered, so 2.4 becomes `W + decode(D)` with `W <= 60 ms` and `D < 60 ms`. At the gate-mandated RTF of at most 0.5 plus fixed per-job overhead, that stays inside the 130 ms already allocated. A 60 ms utterance carries proportionally less audio to decode, which is why the bound closes rather than blows.
+
+No utterance is removed from the G2 or G3 population by duration. An utterance is excluded only when the ASR runner reports no speech at all, which is a content decision (`NO_SPEECH_DETECTED`). Short deliberate commands such as "run", "stop", "yes", and "no" are ordinary samples and have their own benchmark buckets (`docs/performance/BENCHMARK_PLAN.md` section 2.1). The harness records `gpu.leaseWait` on every run, so if this arithmetic is ever wrong it appears as data rather than as an unexplained tail.
 
 ## 4. G3 — hotkey release to cleaned visible draft (500 ms p95)
 
@@ -66,8 +73,8 @@ Segment 2.4 assumes streaming ASR: audio is fed to the runner during capture, so
 | --- | --- | --- | --- | --- |
 | 3.1 | Capture finalization (= 2.1) | Shell | 25 ms | `capture.finalize` |
 | 3.2 | Uplink tail (= 2.2) | Shell to Core | 10 ms | `transport.uplinkTail` |
-| 3.3 | ASR admission (= 2.3) | Core | 10 ms | `gpu.admit(asr)` |
-| 3.4 | ASR final decode (= 2.4) | ASR runner | 130 ms | `asr.finalize` |
+| 3.3 | Final-frame dispatch (= 2.3) | Core | 10 ms | `asr.finalDispatch` |
+| 3.4 | ASR finalization (= 2.4) | Core + ASR runner | 130 ms | `asr.finalize` |
 | 3.5 | Normalization and glossary (= 2.5) | Core | 15 ms | `text.normalize` |
 | 3.6 | Cleanup admission: lease handover, prompt assembly, tokenization | Core | 15 ms | `gpu.admit(cleanup)` |
 | 3.7 | Cleanup generation | Cleanup runner | 180 ms | `cleanup.generate`, runner `computeMs` plus pipe round trip |
@@ -80,7 +87,7 @@ Segment 2.4 assumes streaming ASR: audio is fed to the runner during capture, so
 
 Reserve policy: the 45 ms reserve absorbs GC pauses, scheduler jitter, and desktop compositor contention. It is not allocatable to a component. If a component consistently exceeds its budget, the fix is that component, or an ADR that reallocates the budget explicitly.
 
-Serialization: 3.4 and 3.7 are both GPU jobs and, by ADR-004 section 4, never run concurrently. The budget already reflects sequential execution. There is no hidden parallelism assumption anywhere in this table.
+Serialization: 3.4 and 3.7 are both GPU jobs and, by ADR-004 section 4, never run concurrently. The ASR lease is released when its `result` arrives and cleanup acquires the slot next, FIFO within `P0Interactive`; segment 3.6 is that handover. The budget already reflects sequential execution. There is no hidden parallelism assumption anywhere in this table.
 
 Cleanup token budget: 180 ms at a target of at least 90 generated tokens per second on the selected model means the cleanup output must be bounded. Core caps cleanup generation at `min(1.3 x inputTokens + 24, 512)` tokens and stops on the model's end token. Exceeding the cap is a deadline violation, which cancels the job and falls back to the raw transcript rather than showing a truncated draft (ADR-004 section 5).
 
@@ -131,7 +138,7 @@ The Tailscale target is 560 ms and is reported alongside the measured link RTT s
 - Every segment above is an `System.Diagnostics.Activity` span with the exact name in the tables, emitted to a local ETW listener. Names are stable identifiers and are asserted by a unit test so a rename cannot silently break the harness.
 - Timestamps use `Stopwatch.GetTimestamp()` (QPC) on Windows and `System.nanoTime()` on Android. Wall-clock time is never used for measurement.
 - Cross-device spans are stitched using a clock offset estimated from 20 `Ping`/`Pong` round trips at connection time, taking the minimum-RTT sample. The residual offset error is reported with every phone measurement and any run with an estimated offset error above 3 ms is discarded.
-- The harness records, per run: every segment, GPU queue depth at admission, VRAM high-water mark, whether the GPU interactive window was already clear at ASR admission, the preemption outcome (`NoPreemption`, `AcknowledgedCancel`, `TerminatedAndExited`, `SlotStuck`) and its wall time, runner `computeMs`, and whether the run was warm.
+- The harness records, per run: every segment, GPU queue depth at admission, VRAM high-water mark, `gpu.leaseWait` outstanding at `EndCapture`, `asr.backlogDrain`, the preemption outcome (`NoPreemption`, `AcknowledgedCancel`, `TerminatedAndExited`, `SlotStuck`) and its wall time, utterance duration, the runner's `speechDetected` verdict, runner `computeMs`, and whether the run was warm.
 - The desktop widget exposes the last run's segment breakdown in tray diagnostics so a user can report a slow path with data.
 
 ## 8. Budget violation policy
@@ -139,11 +146,12 @@ The Tailscale target is 560 ms and is reported alongside the measured link RTT s
 | Situation | Behavior |
 | --- | --- |
 | A single segment exceeds its budget on one run | Recorded; no user-visible change |
-| ASR job exceeds its 200 ms deadline | Job cancelled, `ASR_UNAVAILABLE` for this utterance, error state shown; nothing is guessed |
+| ASR finalization exceeds its 200 ms deadline, measured from `EndCapture` | Job cancelled, `ASR_UNAVAILABLE` for this utterance, error state shown; nothing is guessed |
 | Cleanup job exceeds its 260 ms deadline | Job cancelled, draft is the raw transcript with `cleanupApplied: false`; confirmation gate unchanged |
 | TTS first chunk exceeds 200 ms | Chunk still played; the run is counted against G4 |
-| GPU slot cannot be evicted (`GPU_SLOT_STUCK`) | The interactive job fails rather than running concurrently; the run is recorded as a failure, not as a slow success |
-| Utterance shorter than `minUtteranceMs` (250) | `UTTERANCE_TOO_SHORT`, no draft, no G2 or G3 sample; counted separately so an unexpected rate is visible |
+| GPU slot cannot be evicted within `W_preempt` (`GPU_SLOT_STUCK`) | The interactive job fails rather than running concurrently; the run is recorded as a failure, not as a slow success |
+| Audio contained no speech (`NO_SPEECH_DETECTED`) | No draft. Excluded from G2 and G3 because there is no transcript to measure, and counted separately so an unexpected rate is visible. This is the only exclusion, and it is decided by the runner's voice-activity verdict, never by duration |
+| A short utterance is slow because the lease was still pending | Recorded with its `gpu.leaseWait`, and counted in G2 and G3 like any other sample. If short utterances cannot meet the gate, the fix is model or runtime placement, or an explicit budget amendment; it is never exclusion of the sample |
 | p95 regression above the gate in CI-style benchmark runs | The task fails its completion gate; see `docs/performance/BENCHMARK_PLAN.md` section 8 |
 
 No degradation path shortens or skips the confirmation gate. Latency is optimized only after correctness, confirmation, security, and privacy gates pass (`AGENTS.md`).
