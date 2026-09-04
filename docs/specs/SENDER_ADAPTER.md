@@ -13,6 +13,8 @@ The adapter layer is the only place that knows what a coding agent is. Core know
 
 Adapters never receive: PCM audio, the confirmation key `K_conf`, device signing keys, unconfirmed prompt text, or the raw device connection.
 
+**Adapters never handle provider credentials.** An adapter invokes a provider CLI that the user has already authenticated in that provider's own tool. It must not read, copy, transform, persist, inject, log, or display provider tokens, cookies, API keys, or session files, and must not place any such value on a command line or in an environment variable it constructs. Optimus stores no provider secret (ADR-003 section 8). When a provider reports that it is unauthenticated, the adapter returns `ProviderErrorCode.AuthRequired`, Core surfaces `PROVIDER_AUTH_REQUIRED`, and the user is directed to the provider's own login flow. This keeps the `PROJECT_PLAN.md` boundary that agent cloud behavior is unchanged, and it keeps provider account compromise outside the blast radius of an Optimus defect.
+
 ## 2. Contract
 
 ```csharp
@@ -170,7 +172,8 @@ An adapter that spawns a provider CLI:
 - Detects exit and emits `Failed`, then `SessionClosed`. It never auto-restarts a turn.
 - Restarts the CLI for a *new* session on demand only, with backoff 1 s, 2 s, 4 s, capped at 3 attempts per minute.
 - Writes no prompt or output text to any file it creates.
-- Passes credentials through the provider's own mechanism, read from the DPAPI store at spawn time and never placed on the command line, where other processes could read it from the process list.
+- Inherits the user's existing provider authentication by running the CLI as the same user with its own configuration directory. It supplies no credential of its own, constructs no credential-bearing argument or environment variable, and does not read the provider's credential store.
+- Surfaces an unauthenticated provider as `AuthRequired` plus a `Destination.state` of `Unavailable` with `unavailableReason: AuthRequired`. It never prompts for, collects, or relays a credential.
 
 ## 6. Destination discovery
 
@@ -178,6 +181,7 @@ An adapter that spawns a provider CLI:
 - `destinationId` must be stable across restarts for the same provider and workspace, computed as `SHA-256(providerId || canonicalWorkspacePath)` truncated to 128 bits, base64url. Stability matters because a confirmation binds it.
 - `label` is human-readable and is what the user sees in the confirmation card. It must be unambiguous when two workspaces share a folder name; include the parent segment.
 - A discovery failure yields an empty list plus a `ProviderError`; it never yields a stale cached list marked `Available`.
+- A destination whose CLI is installed but unauthenticated is reported as `Unavailable` with `unavailableReason: AuthRequired`, not omitted, so the user can see why it cannot be used.
 
 ## 7. Approval risk classification
 
@@ -191,7 +195,7 @@ An adapter that spawns a provider CLI:
 | `ExecuteCommand` | running a shell command | `Consequential` |
 | `InstallDependency` | package manager install | `Consequential` |
 | `NetworkWrite` | POST, PUT, upload, publish | `Consequential` |
-| `CredentialAccess` | reading tokens, keys, credential stores | `Consequential` |
+| `CredentialAccess` | the agent reading tokens, keys, or credential stores in the workspace or on the machine | `Consequential` |
 | `VersionControlWrite` | commit, push, branch delete, force operations | `Consequential` |
 | `Destructive` | delete, overwrite, reset | `Consequential` |
 | `Other` | anything an adapter cannot classify | `Consequential` |
@@ -245,6 +249,7 @@ T016 delivers `Optimus.Providers.Conformance`, a shared xUnit theory suite execu
 - Every method observes cancellation within 500 ms.
 - Every method returns a typed `ProviderError` rather than throwing for provider-side failures.
 - `DiscoverDestinationsAsync` produces stable `destinationId` values across two calls and across a process restart.
+- An unauthenticated provider yields `AuthRequired` and `unavailableReason: AuthRequired`, and no adapter method reads a provider credential path, constructs a credential-bearing argument, or writes a credential to any Optimus-owned location. The suite asserts this by running each adapter under a filesystem and process-launch recorder.
 - Capability fallbacks behave as section 2 specifies.
 - `Other` operation class maps to `Consequential`.
 - Provider output containing control characters, bidirectional overrides, ANSI escapes, and instruction-like text causes no state transition and is never logged.

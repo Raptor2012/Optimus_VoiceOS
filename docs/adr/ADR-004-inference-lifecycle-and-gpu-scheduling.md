@@ -116,25 +116,42 @@ Priority classes, highest first:
 | `P1Speech` | TTS synthesis for event summaries | Preempts `P2Background` |
 | `P2Background` | Warmup beyond the first, pre-render of common phrases, benchmark runs | Nothing |
 
+**The single-slot invariant is absolute.** The next lease is never granted while the previous holder might still touch the GPU. "Might still touch" ends only at one of two verifiable events: an acknowledged `cancelled` message, or observed process exit, which tears down the CUDA context with it. A timer expiring is not one of those events.
+
 Scheduling rules:
 
 1. Admission is by priority, then FIFO within a priority.
-2. When a `P0Interactive` job is queued while a lower-priority job holds the slot, the scheduler cancels the running job immediately (see section 5), waits for its `cancelled` acknowledgement up to 100 ms, and then admits the `P0` job. It does not wait for a natural completion.
-3. `P1Speech` preempts `P2Background` the same way.
+2. **Preemption sequence.** When a higher-priority job is queued while a lower-priority job holds the slot, the scheduler:
+   1. sends `cancel { jobId }` immediately and starts a 100 ms acknowledgement timer;
+   2. grants the lease as soon as `cancelled` arrives;
+   3. at 100 ms with no acknowledgement, terminates the runner process and waits for the process handle to signal, budget 60 ms, then grants the lease and restarts the runner under section 6;
+   4. if the process has still not exited at 250 ms, marks the slot `Stuck`, refuses the lease with `GPU_SLOT_STUCK`, and fails the waiting job rather than running it concurrently.
+   Worst-case admission is therefore 160 ms, and there is no window in which two runners hold the GPU.
+3. `P1Speech` preempts `P2Background` by the same sequence.
 4. A preempted TTS job is resumable at chunk granularity: Core records the last delivered chunk index and re-issues the remainder as a new job. A preempted benchmark run is discarded and the benchmark reports the interruption rather than the timing.
 5. Every job has a deadline. `P0` ASR deadline is 200 ms, `P0` cleanup 260 ms, `P1` TTS first chunk 200 ms, all measured from admission. Exceeding a deadline cancels the job and raises a degraded-path event; it never blocks the pipeline.
 6. Setup-time VoiceDesign runs as an exclusive mode, section 8.
 
-The scheduler exposes `Task<GpuLease> AcquireAsync(GpuJobRequest, CancellationToken)`; a lease is released on dispose. All GPU work goes through a lease; a runner call outside a lease is a programming error and is asserted in debug builds and rejected in release builds.
+**Preemption happens at capture start, not at ASR admission.** Waiting up to 160 ms for the slot would not fit the 10 ms ASR admission allocation in `docs/performance/LATENCY_BUDGET.md`. Rather than widen the budget, the scheduler moves the cost off the measured path:
+
+- Accepting `StartCapture` opens an **interactive window**: `IGpuScheduler.EnterInteractiveWindow(streamId)`.
+- Entering the window immediately runs the preemption sequence against any `P1Speech` or `P2Background` holder, and bars admission of `P1` and `P2` jobs for the duration of the window.
+- The window closes when the `PromptDraft` is delivered, or when the utterance is aborted or cancelled. `P1` and `P2` admission resumes then.
+- Because the window opens at hotkey **press** and the ASR job is admitted at hotkey **release**, the 160 ms worst case is absorbed while the user is speaking, not after they stop.
+
+The one case where that absorption could fail is an utterance shorter than the preemption cost. Utterances shorter than **250 ms** are treated as an accidental key tap: `EndCapture` yields `UTTERANCE_TOO_SHORT`, no transcript and no draft are produced, and the interactive window closes. Since 250 ms exceeds the 160 ms worst case, contended admission can never appear inside a measured G2 or G3 run.
+
+The scheduler exposes `Task<GpuLease> AcquireAsync(GpuJobRequest, CancellationToken)`; a lease is released on dispose. All GPU work goes through a lease; a runner call outside a lease is a programming error and is asserted in debug builds and rejected in release builds. The scheduler records, per admission: whether the interactive window was open, whether preemption occurred, which of the four preemption outcomes applied, and the admission wait in microseconds.
 
 ### 5. Cancellation
 
-Cancellation is cooperative with a hard fallback:
+Cancellation is cooperative with a hard fallback. There are two deadlines, and which one applies depends on whether anything is waiting for the GPU slot:
 
 1. Core cancels the `CancellationToken`; the runner client sends `cancel { jobId }` on the pipe.
 2. The runner must abandon the job and reply `cancelled` within **100 ms**. Runners check a cancellation flag between decode or generation steps, which for all four model classes is at most a 40 ms step.
-3. If no `cancelled` arrives within **500 ms**, Core marks the runner `Degraded`, kills the process, and restarts it under section 6. The in-flight job fails with `RUNNER_UNRESPONSIVE`.
-4. Cancellation is idempotent; a `cancel` for an unknown or finished `jobId` is a no-op and is acknowledged.
+3. **Preemptive cancellation** (a higher-priority job or an interactive window is waiting for the slot) escalates at 100 ms: terminate, wait for verified exit up to 60 ms, then `GPU_SLOT_STUCK` at 250 ms. Section 4 rule 2 is normative.
+4. **Non-preemptive cancellation** (a user cancel or a deadline expiry with nothing queued behind it) allows the runner **500 ms** to acknowledge before Core marks it `Degraded`, kills it, and restarts it under section 6. The in-flight job fails with `RUNNER_UNRESPONSIVE`. The longer window is safe here precisely because no one is waiting for the slot, so it cannot produce overlap.
+5. Cancellation is idempotent; a `cancel` for an unknown or finished `jobId` is a no-op and is acknowledged.
 
 User-visible cancellations map to this path: releasing the hotkey before speech, pressing Escape on the widget, `CancelRequest` from a device, and preemption by a higher-priority job.
 
@@ -196,12 +213,16 @@ Core verifies every listed file hash at startup and after every runner restart. 
 - **Free-running concurrency with CUDA streams.** Rejected: on 8 GB of consumer VRAM, concurrent decode plus generation produced unbounded tail latency in the design analysis, and VRAM headroom would depend on arrival patterns. A single-slot scheduler makes p95 a function of queueing that we control.
 - **MPS-style multi-process service or CUDA Green Contexts.** Not available or not dependable on consumer Windows drivers. Rejected as a v1 dependency.
 - **Priority by deadline (EDF) instead of fixed classes.** Rejected as over-engineered for three job classes with an order-of-magnitude priority separation; fixed classes are auditable and easy to test.
+- **Granting the next lease when the cancellation timer expires, without waiting for exit.** Rejected: it permits two processes to hold CUDA contexts on an 8 GB device simultaneously, which is exactly the VRAM and tail-latency failure the single-slot design exists to prevent. Verified exit is cheap (`TerminateProcess` plus a handle wait) and bounded.
+- **Widening the ASR admission budget to cover contended preemption.** Rejected: it would consume the G3 reserve for a case that can be moved off the measured path entirely. Preempting at capture start absorbs the cost during speech instead.
 - **Keeping VoiceDesign resident.** Rejected: 3.0 GB plus 4.6 GB exceeds the residency ceiling and would push the desktop compositor into shared memory, which is exactly the tail-latency failure mode the budget cannot absorb.
 
 ## Consequences
 
-- Warm-path latency is predictable because only one GPU job runs at a time and higher-priority work preempts within 100 ms.
-- Voice output can be cut off mid-sentence when the user starts speaking. This is the correct trade: the user is the higher priority.
+- Warm-path latency is predictable because only one GPU job runs at a time, and because the interactive window clears the slot at hotkey press rather than at ASR admission.
+- Worst-case preemption is 160 ms and is bounded by verified process exit, never by a timer alone. The pathological case surfaces as `GPU_SLOT_STUCK` and a failed job, not as silent GPU contention.
+- Voice output can be cut off mid-sentence when the user starts speaking, and it is cut off at press rather than at release. This is the correct trade: the user is the higher priority.
+- A key tap shorter than 250 ms produces nothing at all. That is the intended behavior for an accidental press, and it also removes the only path by which preemption cost could reach a measured latency gate.
 - Voice Design temporarily suspends dictation. This is visible and explained in the UI.
 - Every runner failure has a defined, invariant-preserving degradation, so a crash never produces a silently different prompt.
 - The single-slot design leaves GPU idle time when ASR is waiting on I/O. Measured utilization is a benchmark output, not a target.
@@ -209,7 +230,8 @@ Core verifies every listed file hash at startup and after every runner restart. 
 ## Verification
 
 - T007 unit tests: pipe framing vectors, `ready` timeout, ping-miss detection, restart backoff and the 5-in-5 terminal rule, cancellation acknowledged inside 100 ms, kill after 500 ms, lease required for every GPU call.
-- T007 scheduler tests: priority admission order, `P0` preemption of `P1` and `P2` within 100 ms, deadline expiry cancels rather than blocks, TTS chunk-resume after preemption.
+- T007 scheduler tests: priority admission order; the four preemption outcomes in section 4 rule 2, each asserted with a fake runner that acknowledges promptly, acknowledges late, exits only on terminate, and never exits; an assertion that no two leases are ever concurrently live, verified by a counter that fails the test on a second grant; deadline expiry cancels rather than blocks; TTS chunk-resume after preemption; `EnterInteractiveWindow` preempts `P1`/`P2` and bars their admission until the window closes; `UTTERANCE_TOO_SHORT` closes the window and produces no draft.
+- T011 and T028 measure G2 and G3 with TTS actively speaking at hotkey press (the `active-tts-to-hotkey` scenario in `docs/performance/BENCHMARK_PLAN.md` section 2.4) and record preemption outcome and admission wait for every run.
 - T008 and T009 tests assert that a cancelled job yields no partial draft and that a `cleanup` failure produces a raw-transcript draft flagged `cleanupUnavailable` that still requires confirmation.
 - T013 tests assert that entering `SetupExclusive` disables capture and that exit restores all warm runners to `Ready` before capture re-enables.
 - T024 privacy test enumerates the process working directories, `%TEMP%`, and the application data tree after 50 utterances and asserts that no audio file exists outside the opt-in calibration directory.

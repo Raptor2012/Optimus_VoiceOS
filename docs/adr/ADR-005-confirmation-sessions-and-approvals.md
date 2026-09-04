@@ -28,8 +28,25 @@ Capture -> Transcript -> CleanedDraft -> [user selects destination] -> Confirmat
 
 - A `PromptDraft` alone is never sendable. It carries no confirmation material.
 - Core issues a `ConfirmationRequest` only when a destination is explicitly set for the draft. If no destination is set, `RequestConfirmation` fails with `DESTINATION_REQUIRED`. Core never picks a default, never reuses "the last one" implicitly, and never infers a destination from prompt content.
+- **`RequestConfirmation.sessionId` is required and must be non-null.** A null or unknown `sessionId` fails with `SESSION_REQUIRED`. Core never creates a provider session as a side effect of asking for a confirmation.
 - The destination shown in the `ConfirmationRequest` is the destination that is validated at send time. A destination change after issuance invalidates the confirmation.
 - Editing the draft on the device invalidates the confirmation, because the confirmation binds the text hash. The device must call `RequestConfirmation` again, and the new confirmation renders the edited text back to the user.
+
+**Session resolution before confirmation.** The product requires that a provider session persists until the user chooses New Session, so session creation must be an explicit user action and must never be reachable through a stale or buggy client sending `sessionId: null`:
+
+1. The device selects a destination and reads `Destination.resumableSessionId`.
+2. If a resumable session exists, the device sends `ResumeSessionRequest` and uses the returned `sessionId`.
+3. If none exists, or the user wants a fresh context, the user presses New Session and the device sends `NewSession { destinationId }`; Core creates the session and returns its `sessionId` in `SessionUpdate`.
+4. Only then may the device send `RequestConfirmation` with that non-null `sessionId`.
+
+Core validates that the `sessionId` exists, belongs to `destinationId`, and is not `Closed`; otherwise `SESSION_NOT_FOUND`. The first prompt to a never-used destination therefore costs one explicit New Session action, which is exactly the visible choice the invariant demands.
+
+**Concurrent `NewSession`.** Two safeguards, in this order:
+
+- Envelope idempotency: a repeated `NewSession` with the same `id` returns the original `SessionUpdate` with `duplicate: true` (ADR-002 section 4).
+- Coalescing: Core holds a per-`destinationId` lock and coalesces `NewSession` requests with *different* ids arriving within 2 s of a successful creation, from any device, returning the same `sessionId` with `coalesced: true`. This stops a double tap, a retry after a slow response, or two devices acting at once from silently creating two provider sessions.
+
+A deliberate second session on the same destination is available through New Session again after the 2 s window, and the Sessions screen lists both.
 
 ### 2. Confirmation token
 
@@ -41,7 +58,7 @@ ConfirmationRequest.payload {
   promptText,              // exactly what the device must display
   promptHash,              // base64url SHA-256 of NFC UTF-8 bytes of promptText
   destinationId, destinationLabel, providerId,
-  sessionId,               // null for a new session
+  sessionId,               // required, never null; resolved by NewSession or ResumeSessionRequest
   intendedMode,            // Send | Queue | Steer
   deviceId,                // the only device permitted to confirm
   issuedAtUtc, expiresAtUtc,   // expiry = issuedAt + 120 s
@@ -53,11 +70,14 @@ ConfirmationRequest.payload {
 MAC input is the canonical concatenation (`docs/specs/WIRE_PROTOCOL.md` section 3):
 
 ```
-"optimus-confirm-v1" || confirmationId || promptHash || destinationId || providerId ||
-(sessionId ?? "") || intendedMode || deviceId || issuedAtUtc || expiresAtUtc || nonce
+canonical("optimus-confirm-v1",
+  confirmationId, promptHash, destinationId, providerId, sessionId,
+  intendedMode, deviceId, issuedAtUtc, expiresAtUtc, nonce)
 ```
 
-`K_conf` is 32 CSPRNG bytes generated at each Core start, held in memory only, and zeroed on shutdown (ADR-003 section 7). It never leaves Core, and no adapter, runner, or device ever sees it.
+Every field is present; `sessionId` has no null case, so there is no empty-string substitution and no encoding ambiguity.
+
+`K_conf` is 32 CSPRNG bytes generated at each Core start, held in memory only, and zeroed on shutdown (ADR-003 section 8). It never leaves Core, and no adapter, runner, or device ever sees it.
 
 The MAC exists so that server-side pending state is verifiable rather than merely looked up. Core also keeps an authoritative pending map keyed by `confirmationId`, so a valid MAC alone is insufficient: the entry must exist and be unconsumed.
 
@@ -70,7 +90,7 @@ SendAction.payload {
   confirmationId,
   displayedText,        // the exact string the device rendered
   destinationId,
-  sessionId,            // or null
+  sessionId,            // required, echoed from the ConfirmationRequest
   mode,                 // Send | Queue | Steer
   mac,                  // echoed unmodified
   confirmedAtUtc
@@ -94,7 +114,11 @@ Core validates in this order, rejecting at the first failure and consuming nothi
 
 Only after all ten checks pass does Core mark the entry consumed (atomically, under the pending map lock, so two concurrent `SendAction` messages cannot both pass check 3) and construct a `ConfirmedPrompt` for the adapter.
 
-Check 6 is the reason `displayedText` is echoed rather than trusted from server state: it proves the device rendered the same bytes Core is about to send. A device that shows text A and echoes text B fails, and a compromised device cannot make Core send text the confirmation did not cover.
+**What check 6 does and does not prove.** Echoing `displayedText` is a binding check, not an attestation of pixels. It proves that the bytes the client submitted for sending are the bytes the confirmation covers, which catches the realistic and dangerous class of honest client defects: a stale draft buffer, a race between an edit and a confirmation, a truncation or normalization difference between the rendered string and the submitted one, and a client that mixes up two concurrent drafts. It cannot prove what a compromised client painted on screen; a client that has been subverted can render anything while echoing the correct bytes.
+
+To make the check meaningful rather than ceremonial, clients are required to build one **immutable confirmation view model** per `ConfirmationRequest`, containing the exact `promptText`, `destinationLabel`, and session title. The rendered UI and the echoed `displayedText` must both read from that single frozen value, and no code path may re-derive, re-format, or re-wrap the text between render and echo. T005, T022, and the client review checklist enforce this.
+
+Server-side exact-content validation stays regardless: Core recomputes the hash and never sends text the confirmation did not cover. A compromised paired client presenting misleading UI is recorded as a residual risk in `docs/security/THREAT_MODEL.md`, not as a threat this check defeats.
 
 Additional rules:
 
@@ -133,8 +157,9 @@ AgentSession {
 }
 ```
 
-- Sessions persist as **text metadata only** in `%LOCALAPPDATA%\Optimus\state\sessions.json`. No prompt bodies, no provider output, no audio.
-- Sessions survive Core restarts and are re-attached with `ResumeSession`. A provider that cannot resume returns `SessionNotFound`; Core then marks the session `Closed` and tells the user, rather than silently creating a new one.
+- Sessions persist as **metadata only** in `%LOCALAPPDATA%\Optimus\state\sessions.json`. The persisted fields are exactly those listed above plus `title`. No prompt bodies, no queued prompt text, no queue previews, no provider output, no audio. `queueDepth` is recomputed at runtime and is written as `0`.
+- The `title` is the one exception that derives from prompt text: it is the first 60 characters of the first prompt, user-editable, and is covered by the history retention setting and by Clear History, which resets titles to `Session <n>`. This is called out rather than hidden, because a title is user-visible text derived from a prompt.
+- Sessions survive Core restarts and are re-attached with `ResumeSessionRequest`. A provider that cannot resume returns `SessionNotFound`; Core then marks the session `Closed` and tells the user, rather than silently creating a new one.
 - A session is discarded only by an explicit `NewSession` action. Nothing else, including a provider crash, a reconnect, or a destination refresh, ends a session.
 - Destination changes never migrate a session. Selecting a different destination creates or resumes a session on that destination; the previous session remains listed and resumable.
 
@@ -163,7 +188,10 @@ When the target session is not `Idle`, a `Send` is refused with `SESSION_BUSY` a
 - The confirmation is validated at enqueue time. Once enqueued, the item carries its `ConfirmationReceipt` and is **not** re-checked for expiry, because the user already confirmed that exact text for that exact session; expiring it later would silently drop a confirmed intent.
 - Queued items are visible and individually removable from the Sessions screen. Removing one is not a send.
 - On session `Failed` or `Closed`, the queue is discarded and the user is told how many items were dropped.
-- Queue survives a Core restart only if the session resumes; otherwise it is dropped with a notice. Queued item text is held in memory and in the session state file, subject to the same retention setting as history.
+- **The queue is in-memory only and never persisted.** Queued prompt text and the 80-character preview exist in Core memory and in device UI state, and nowhere else. Nothing about a queued item is written to `sessions.json`, to history, or to any other file.
+- **A Core restart drops every queue.** Session metadata still resumes, and the affected sessions carry `queueDroppedCount` in the first `SessionUpdate` after restart so each device can show "3 queued prompts were discarded when the service restarted". The count is a number, not the text. Devices must not re-send from a local copy; a dropped item requires a fresh draft and a fresh confirmation.
+
+This is the deliberate resolution of a conflict between two product requirements. Durable queues would mean writing confirmed prompt bodies to disk, which contradicts the storage rule above and the privacy position in `docs/security/THREAT_MODEL.md` that prompt content is not persisted beyond the opt-in text history. Losing a queue on a restart costs the user a re-dictation of at most five prompts, in a situation that is already visible to them. Persisting prompt bodies would cost every user a permanent on-disk record of their prompts. If durable queues later prove product-critical, they require an ADR amendment defining opt-in, encryption, retention, deletion, crash-dump, backup, and threat-model behavior; they must not arrive as an implementation convenience.
 
 **Steer.**
 
@@ -191,7 +219,9 @@ ApprovalRequest.payload {
   riskLevel,                // Low | Elevated | Consequential
   operationHash,            // base64url SHA-256 over the canonical operation description from the provider
   issuedAtUtc, expiresAtUtc,   // expiry = issuedAt + 180 s
-  nonce, mac                // HMAC-SHA256(K_conf, "optimus-approval-v1" || approvalId || sessionId || operationHash || riskLevel || issuedAtUtc || expiresAtUtc || nonce)
+  nonce, mac                // HMAC-SHA256(K_conf, canonical("optimus-approval-v1",
+                            //   approvalId, sessionId, operationHash, riskLevel,
+                            //   issuedAtUtc, expiresAtUtc, nonce))
 }
 ```
 
@@ -203,15 +233,32 @@ ApprovalResponse.payload {
   operationHash,             // echoed
   mac,                       // echoed
   decidedAtUtc,
+  attestationKind,           // DeviceSignature | LocalVerification | None
   attestation                // required when riskLevel == Consequential
 }
 ```
 
-`attestation` is an Ed25519 signature by the Android `optimus_approval_v1` biometric-bound key (ADR-003 section 7), or a Windows Hello `UserConsentVerifier` success token equivalent on the desktop, over:
+**Two attestation kinds, with different and honestly stated strength.**
+
+`DeviceSignature` (Android, and any future device with a hardware-backed, user-authentication-bound key) is an ECDSA P-256 with SHA-256 signature by `optimus_approval_v1` (ADR-003 section 8), produced through a `BiometricPrompt`-bound `CryptoObject`, over:
 
 ```
-"optimus-approval-response-v1" || approvalId || decision || operationHash || decidedAtUtc || exporter
+canonical("optimus-approval-response-v1",
+  approvalId, decision, operationHash, decidedAtUtc, approvalNonce, serverChallenge)
 ```
+
+`approvalNonce` is the `nonce` from the `ApprovalRequest`, binding the signature to that specific issuance. `serverChallenge` is the connection challenge from ADR-003 section 6, binding it to this connection. Together they make the signature useless on any other approval or any other connection.
+
+`LocalVerification` (desktop) is **not a signature**. `UserConsentVerifier` returns a result enumeration and performs no cryptographic operation over Optimus data, so the desktop cannot produce anything comparable. The payload is `{ approvalId, verifiedAtUtc, method: "WindowsHello" }`, an assertion by the Shell that a Windows Hello verification succeeded for that approval. Core accepts it only on a loopback connection authenticated by the local capability token, only for the named `approvalId`, only within 60 s of `verifiedAtUtc`, and only once. Its trust is bounded by the same-user boundary, exactly like the capability token itself, and `docs/security/THREAT_MODEL.md` records that as a residual risk rather than a defence.
+
+Which kinds Core accepts is policy `approvals.consequentialAttestationPolicy`:
+
+| Value | Accepts | Default when |
+| --- | --- | --- |
+| `AllowLocalVerification` | `DeviceSignature` and `LocalVerification` | No phone is paired |
+| `RequireDeviceSignature` | `DeviceSignature` only | From the moment a phone is paired |
+
+Under `RequireDeviceSignature`, a desktop `LocalVerification` for a `Consequential` approval is refused with `APPROVAL_ATTESTATION_NOT_PERMITTED` and the UI directs the decision to the phone. The policy is shown during pairing and is changeable in tray settings; changing it is recorded in the event history.
 
 Validation order, first failure wins:
 
@@ -223,7 +270,9 @@ Validation order, first failure wins:
 | 4 | `mac` recomputes and matches, constant-time | `APPROVAL_INVALID` |
 | 5 | Echoed `operationHash` equals the issued value | `APPROVAL_CONTENT_MISMATCH` |
 | 6 | The provider still reports the same pending operation with the same hash | `APPROVAL_OPERATION_CHANGED` |
-| 7 | `riskLevel == Consequential` implies a valid `attestation` bound to this connection exporter and within 60 s | `APPROVAL_ATTESTATION_REQUIRED` / `APPROVAL_ATTESTATION_INVALID` |
+| 7 | `riskLevel == Consequential` implies `attestationKind != None` | `APPROVAL_ATTESTATION_REQUIRED` |
+| 8 | `attestationKind` is permitted by the active policy | `APPROVAL_ATTESTATION_NOT_PERMITTED` |
+| 9 | `DeviceSignature`: verifies against the stored `approvalPublicKey`, covers this `approvalId`, `decision`, `operationHash`, `approvalNonce`, and this connection challenge, and `abs(now - decidedAtUtc) <= 60 s`. `LocalVerification`: loopback connection, matching `approvalId`, `abs(now - verifiedAtUtc) <= 60 s`, not previously accepted | `APPROVAL_ATTESTATION_INVALID` |
 
 Then the entry is consumed atomically and the decision is forwarded.
 
@@ -252,12 +301,15 @@ Provider text (`AgentEvent`, question text, approval `title` and `detail`) is tr
 
 ## Alternatives considered
 
-- **Server-side text only, no `displayedText` echo.** Simpler, but it cannot detect a device that displayed different text from what Core holds, which is the exact failure the invariant is written against. Rejected.
+- **Server-side text only, no `displayedText` echo.** Simpler, but it cannot detect a client that submits a different string from the one the confirmation covers, which is the realistic defect class (stale buffers, edit races, normalization drift). Rejected, with the claim narrowed in section 3 to what the echo actually proves.
 - **Confirmation as a bare server-side identifier with no MAC.** Rejected: the MAC makes the binding self-describing, lets rejection reasons be precise, and protects against pending-map bugs that would otherwise silently accept mismatched bindings.
 - **Long-lived confirmations (10 minutes or more).** Rejected: a draft the user read ten minutes ago is not a current intent. 120 s matches the observed read-and-confirm interaction and is renewable with one tap.
 - **Auto-queueing when a session is busy.** Rejected: it converts a decision the user must make into an inference, which the invariants forbid.
+- **Allowing `RequestConfirmation` with a null `sessionId` to imply a new session.** Rejected: it makes provider-session creation reachable from a stale or buggy client without the user ever choosing New Session, which defeats the requirement that sessions persist until the user explicitly ends them. The cost is one explicit action on first use of a destination, which is the visible choice the product wants anyway.
+- **Durable, disk-backed prompt queues.** Rejected: the only way a queue survives a restart is by persisting confirmed prompt bodies, which contradicts both the session-storage rule and the privacy position that prompt content is not persisted beyond the opt-in history. Queues are in-memory and are reported as dropped.
 - **Re-validating queued confirmations for expiry at dequeue.** Rejected: it would silently drop confirmed intent after the user was told the prompt was queued.
 - **Biometric on every approval.** Rejected: it trains users to authenticate reflexively. Reserving it for `Consequential` keeps the prompt meaningful.
+- **Describing the Windows Hello result as an attestation token.** Rejected as factually wrong: `UserConsentVerifier` signs nothing. The desktop kind is named `LocalVerification`, its trust boundary is stated, and once a phone is paired the default policy routes consequential decisions to the phone where a real signature exists.
 - **Trusting provider-declared risk level.** Rejected outright: it lets untrusted output downgrade a gate.
 
 ## Consequences
@@ -267,13 +319,21 @@ Provider text (`AgentEvent`, question text, approval `title` and `detail`) is tr
 - Broadcasting approvals to all devices means two devices can race; the loser sees a clear resolved state rather than an error dialog.
 - Because `K_conf` is per-Core-start, a Core restart during confirmation forces a re-confirmation. Intended.
 - Adapters cannot be given a convenience "send text" entry point without breaking the type contract, which keeps future adapter work honest.
+- The first prompt to a new destination requires an explicit New Session tap. This is one extra action, and it is the action the invariant is about.
+- A Core restart discards queued prompts. Users see a count, not a silent loss, and session context still resumes.
+- Desktop consequential approvals are weaker than phone approvals, and the product says so instead of implying parity.
 
 ## Verification
 
 - T019 unit tests cover each of the ten `SendAction` checks with a dedicated negative case, plus: concurrent double-send admits exactly one; tampered `displayedText` by one character fails check 6; destination swap fails check 7; confirmation from a second device fails check 8; three failed attempts invalidate the entry.
+- T019 tests assert `RequestConfirmation` with a null, unknown, closed, or wrong-destination `sessionId` fails with `SESSION_REQUIRED` or `SESSION_NOT_FOUND`, and that no provider session is created as a side effect of any confirmation request.
+- T018 tests assert that two `NewSession` requests with different envelope ids within 2 s produce one session with `coalesced: true`, and that the same envelope id produces `duplicate: true`.
+- T005 and T022 tests assert that the rendered confirmation string and the echoed `displayedText` come from the same immutable view model instance, and that no re-formatting occurs between them.
 - T019 test asserts a `Send` confirmation cannot be redeemed as `Steer` or `Queue`.
-- T018 tests cover queue FIFO, `QUEUE_FULL`, queue drop on `Failed`, single in-flight steer, `STEER_MISSED` requiring a new confirmation, and session persistence across a Core restart.
-- T023 instrumented test asserts a `Consequential` approval without biometric attestation is rejected with `APPROVAL_ATTESTATION_REQUIRED`, and that a replayed `ApprovalResponse` gets `APPROVAL_ALREADY_USED`.
+- T018 tests cover queue FIFO, `QUEUE_FULL`, queue drop on `Failed`, single in-flight steer, `STEER_MISSED` requiring a new confirmation, and session metadata persistence across a Core restart.
+- T018 and T024 tests assert that `sessions.json` after a restart contains no queued prompt text and no preview, that every queue is empty, and that each affected session reports a non-zero `queueDroppedCount` exactly once.
+- T023 instrumented test asserts a `Consequential` approval with `attestationKind: None` is rejected with `APPROVAL_ATTESTATION_REQUIRED`; that a `DeviceSignature` produced for a different `approvalId`, a different `approvalNonce`, or a different connection challenge fails check 9; and that a replayed `ApprovalResponse` gets `APPROVAL_ALREADY_USED`.
+- T020 and T023 tests assert `LocalVerification` is refused on a non-loopback connection and refused entirely under `RequireDeviceSignature` with `APPROVAL_ATTESTATION_NOT_PERMITTED`.
 - T016 and T017 adapter tests feed hostile provider output containing control characters, bidirectional overrides, Markdown, and instruction-like text, and assert no state transition occurs and the rendered and spoken strings are sanitized and capped.
 - T029 release audit greps the codebase for any adapter entry point accepting prompt text without a `ConfirmationReceipt`.
 

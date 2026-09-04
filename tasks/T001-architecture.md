@@ -87,7 +87,8 @@ Manually verify every referenced path and cross-document link. Record all checks
 ## Evidence
 
 - Base commit: `fdca807` (`chore: establish multi-model project workflow`)
-- Commit: `27d065c` — `T001: architecture foundation, protocol and security specs, and T002 contract`. This commit contains every deliverable. The only later commit on this branch is the one that writes this hash into the evidence, so Sol should review the branch head against the base.
+- Round 1 commit: `27d065c`, containing every deliverable.
+- Round 2 commit: the correction commit recorded under "Round 2 corrections" below. Sol should review the branch head against the base commit.
 
 ### Deliverables produced
 
@@ -149,9 +150,67 @@ grep -oE '^\| T0[0-9]{2}' docs/BACKLOG.md | tr -d '| ' | sort -u
 - `PROJECT_PLAN.md` was not modified. No contradiction requiring correction was demonstrated during this task.
 - Android and .NET toolchain versions pinned in `tasks/T002-scaffold.md` section 1 are known-good, conservative choices. If a pinned version is unavailable on the build machine, T002 instructs the implementer to report a blocker rather than substitute a version.
 
+### Round 2 corrections (response to `reviews/T001-sol.md`, round 1)
+
+All six P1 findings and the single P2 finding were resolved. Each was resolved as a design decision propagated across every affected document, not as a local edit.
+
+| Finding | Resolution | Documents changed |
+| --- | --- | --- |
+| P1-1 Approval primitives not implementable | All asymmetric signatures are now ECDSA P-256 with SHA-256, DER, low-S normalized, because `AndroidKeyStore` offers no Ed25519 through `KeyPairGenerator` and .NET 8 has no Ed25519 primitive. Desktop approval is re-specified as `attestationKind: LocalVerification`, an honest local verification result with its trust boundary stated, never described as a token or a signature. A new policy `approvals.consequentialAttestationPolicy` defaults to `RequireDeviceSignature` once a phone is paired, routing consequential decisions to the device that can actually sign. | ADR-003 sections 3, 4, 6, 8, alternatives, verification; ADR-005 section 8, alternatives, verification; `WIRE_PROTOCOL.md` `Hello`, `Welcome`, `DeviceSession`, `ApprovalResponse`, error registry, vectors; `THREAT_MODEL.md` A5, T2, T4, T7, R8, release gates 10-11; `BACKLOG.md` T020, T021, T023 |
+| P1-2 TLS exporter not reachable | RFC 5705 exporter binding is removed entirely. The server now speaks first with a single-use, per-connection `Challenge`, and every signature and pairing proof covers it. The Android TLS stack is fixed as OkHttp 4.12.0 with a custom `X509TrustManager` performing SPKI pin comparison, with an explicit note that `CertificatePinner` cannot be used against a self-signed certificate. | ADR-002 sections 1, 5, alternatives, verification; ADR-003 sections 3, 4, 6, alternatives, verification; `WIRE_PROTOCOL.md` sections 1, 5.1, 6.0, 6.4, vectors; `THREAT_MODEL.md` T5; `BACKLOG.md` T003, T004, T020, T021; `T002-scaffold.md`, which now states that T002 adds neither OkHttp nor cryptography |
+| P1-3 Queue persistence contradiction | Queues are in-memory only and are never persisted. A Core restart drops them and reports `queueDroppedCount`, a number and not the text. `sessions.json` now enumerates exactly what it stores, and the one prompt-derived field, the session title, is called out explicitly rather than left implicit. | ADR-005 sections 5, 6, alternatives, consequences, verification; ADR-001 section 4; ADR-002 section 5; `WIRE_PROTOCOL.md` `SessionList`, `SessionUpdate`; `THREAT_MODEL.md` T8, R9, release gate 13; `BACKLOG.md` T018, T024; `ARCHITECTURE.md` |
+| P1-4 Explicit-session invariant unenforced | `RequestConfirmation.sessionId` is now required and non-null, with a new `SESSION_REQUIRED` code. A session is obtainable only through an explicit `NewSession` or `ResumeSessionRequest`; `Destination.defaultSessionId` is renamed `resumableSessionId` and is informational. Concurrent `NewSession` is defined: envelope idempotency plus a 2 s per-destination coalescing window. The confirmation MAC no longer contains a nullable field, removing an encoding ambiguity. | ADR-005 sections 1, 2, 3, alternatives, consequences, verification; `WIRE_PROTOCOL.md` `Destination`, `RequestConfirmation`, `SessionUpdate`, `NewSession`, sequence 6.1, state machine, error registry, vectors; `BACKLOG.md` T018, T019; `ARCHITECTURE.md` |
+| P1-5 Preemption overlap and budget inconsistency | The single-slot invariant is now absolute: the next lease is granted only on acknowledged cancellation or verified process exit, never on a timer alone. The preemption sequence is a four-outcome ladder bounded at 160 ms, ending in `GPU_SLOT_STUCK` and a failed job rather than concurrency. Preemption is moved off the measured path by opening the GPU interactive window at `StartCapture`, and utterances below 250 ms are rejected as accidental taps, so contention cannot reach a G2 or G3 sample. Two benchmark scenarios, `active-tts-to-hotkey` and `stuck-tts-to-hotkey`, plus a release gate, now cover the path. | ADR-004 sections 4, 5, alternatives, consequences, verification; `LATENCY_BUDGET.md` sections 2, 3, 7, 8; `BENCHMARK_PLAN.md` sections 2.4, 4, 6.1, 9; `WIRE_PROTOCOL.md` `StartCapture`, `EndCapture`, state machine, error registry; `THREAT_MODEL.md` release gate 14; `BACKLOG.md` T007, T011, T028 |
+| P1-6 Provider credential ownership | Optimus now stores no provider credential at all. Adapters drive a CLI the user authenticated in the provider's own tool, must not read, copy, transform, persist, inject, log, or display any provider secret, and report `AuthRequired` and `PROVIDER_AUTH_REQUIRED` instead. Provider credentials are removed from the asset list and reframed as explicitly not an Optimus asset. | ADR-003 section 8; ADR-001 section 1; `SENDER_ADAPTER.md` sections 1, 5, 6, 7, 11; `WIRE_PROTOCOL.md` `Destination`, error registry; `THREAT_MODEL.md` A7, T2, release gate 12; `BACKLOG.md` T016, T017; `ARCHITECTURE.md` |
+| P2-1 Overstated `displayedText` claim | The claim is narrowed to what the echo actually proves: a binding check against honest client defects, not an attestation of rendering. Clients must build one immutable confirmation view model feeding both render and echo. A compromised paired client presenting misleading UI is now residual risk R8. | ADR-005 section 3, alternatives, verification; `WIRE_PROTOCOL.md` `ConfirmationRequest`; `THREAT_MODEL.md` R8; `BACKLOG.md` T005 |
+
+Two consistency corrections were made while propagating the above. Both are recorded rather than left silent:
+
+- ADR-002 section 4 listed `CreateSession` and `ResumeSession` among idempotent device messages; neither is a wire message. The list now names the actual message types.
+- An interim edit introduced an `awaitingSession` device state. That would have added an eleventh user-visible state beyond the ten in `PROJECT_PLAN.md`, so it was removed. Destination and session selection are instead specified as occurring inside `cleaning`, which previously had an undefined gap between `PromptDraft` and `ConfirmationRequest`.
+
+### Round 2 commands and results
+
+Commands executed, in order:
+
+```
+git log --oneline -6
+git show --stat 4846a72
+git show 4846a72:reviews/T001-sol.md
+grep -rn "exporter|EXPORTER|RFC 5705|Ed25519|defaultSessionId" docs tasks
+grep -rn "ADR-003 section" docs tasks
+grep -rhoE "ADR-00[1-5] section [0-9]+" docs tasks | sort -u
+grep -oE "^### [0-9]+\." docs/adr/ADR-00*.md
+grep -oE "^#### .[A-Za-z]+." docs/specs/WIRE_PROTOCOL.md
+python  (error-code audit: every SCREAMING_SNAKE_CASE code used in docs and tasks against the WIRE_PROTOCOL section 8 registry)
+git add -A
+git diff --check
+git diff --cached --check
+git status --short
+```
+
+Results:
+
+- Stale-term sweep: the only remaining occurrences of `Ed25519` and `RFC 5705` are the four sentences in ADR-003 that record why each was rejected. No specification text depends on either. `defaultSessionId` and every `exporter` field are gone.
+- Section-reference audit: every `ADR-00N section M` reference resolves to an existing numbered section. ADR-003 gained a section, so its old sections 5, 6, and 7 became 6, 7, and 8; the five external references in ADR-001, ADR-002, ADR-005, `WIRE_PROTOCOL.md`, and `THREAT_MODEL.md` were updated to match.
+- Error-code audit: every code used anywhere in `docs/` or `tasks/` appears in the `WIRE_PROTOCOL.md` section 8 registry, excluding platform API constants such as `FLAG_SECURE` and `ANDROID_HOME`. Five codes were added: `SESSION_REQUIRED`, `UTTERANCE_TOO_SHORT`, `GPU_SLOT_STUCK`, `PROVIDER_AUTH_REQUIRED`, and `APPROVAL_ATTESTATION_NOT_PERMITTED`.
+- Message-catalogue check: all nine public message types named in `PROJECT_PLAN.md` are specified. `Challenge` was added as a connection-level message, and `PairChallenge`, `PairRequest`, and `PairResult` are pointed at ADR-003 section 4 from the transport summary.
+- Latency arithmetic re-verified after the preemption change. The segment tables are unchanged, so G1 42+8=50, G2 235+15=250, G3 455+45=500, G4 187+13=200, phone LAN 470+30=500, and Tailscale 510+50=560 all still hold. The 10 ms ASR admission allocation is now justified in `LATENCY_BUDGET.md` section 3 rather than assumed, and a table-formatting break introduced during editing was found and fixed.
+- `git diff --check` and `git diff --cached --check`: no output, exit code 0.
+- `git status --short`: only files under `docs/` and `tasks/` are modified. No build output, secrets, models, audio, or benchmark output.
+
+### Round 2 known limitations
+
+- The OkHttp custom-trust-manager path and the `AndroidKeyStore` P-256 biometric binding are specified from documented platform behavior. Neither is yet demonstrated on the Pixel 9a. T021 and T023 carry that proof and their completion gates name it. If either proves unworkable in practice, that is an Opus escalation and an ADR amendment, not an implementation workaround.
+- `LocalVerification` is deliberately weaker than `DeviceSignature`. The product now says so, defaults away from it once a phone is paired, and records it as R8. It is not a defence against a compromised same-user machine and is not presented as one.
+- Dropping queues on a restart is a deliberate privacy-over-convenience trade, recorded as R9. If durable queues later prove product-critical, ADR-005 requires an amendment covering opt-in, encryption, retention, deletion, crash-dump, and backup behavior.
+- The 250 ms minimum utterance is derived from the 160 ms worst-case preemption plus margin. It is a design value; T011 measures the actual short-tap rate so an unexpectedly high number is visible rather than hidden.
+- Round 1 limitations recorded above still stand unchanged: latency figures are allocations rather than measurements, and model winners remain unselected pending target-hardware results.
+
 ## Review history
 
 - Round 1: `reviews/T001-sol.md`
 - Reviewed commit: `122cbbf`
 - Verdict: `CHANGES_REQUIRED`
 - Blocking findings: Android/Windows approval primitives, Android TLS-exporter feasibility, queue privacy contradiction, explicit-session enforcement, GPU preemption/latency consistency, and provider credential ownership.
+- Round 2: corrections committed on this branch. All six P1 findings and the one P2 finding are addressed as recorded above. Awaiting re-review by GPT-5.6 Sol against the new branch head.

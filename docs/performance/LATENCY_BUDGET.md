@@ -32,6 +32,8 @@ From `PROJECT_PLAN.md`:
 | 1.5 | Reserve | | 8 ms | |
 | | **Total** | | **50 ms** | |
 
+Entering the GPU interactive window happens here too: accepting `StartCapture` preempts any TTS or background GPU job and bars their admission until the draft is delivered (ADR-004 section 4). Preemption runs concurrently with segments 1.3 and 1.4 and does not gate capture start, so it contributes nothing to G1. Its worst case, 160 ms, is absorbed while the user speaks.
+
 Design notes that make this achievable:
 
 - The Shell keeps the WASAPI capture client **initialized but stopped**. `Start()` on an initialized client avoids format negotiation and buffer allocation. The client is not left running, so the Windows microphone indicator appears only while capture is genuinely active.
@@ -55,6 +57,8 @@ Design notes that make this achievable:
 | | **Total** | | **250 ms** | |
 
 Segment 2.4 assumes streaming ASR: audio is fed to the runner during capture, so only the tail plus final decoding remains at key-up. This is why the 20 s utterance limit in G2 does not change the budget; the streaming portion is absorbed during speech. The benchmark plan verifies this by reporting 2.4 against utterance duration and failing the model if the slope is not flat.
+
+**Why 10 ms is enough for segment 2.3.** The GPU slot is single-threaded and preemption can cost up to 160 ms (ADR-004 section 4 rule 2), which would not fit here. It does not need to: the slot is cleared when the interactive window opens at hotkey press, so by hotkey release the ASR job admits into a free slot and the measured wait is a lease handoff, not an eviction. The only case where an eviction could still be in progress at release is an utterance shorter than the 160 ms worst case, and utterances below 250 ms are rejected as accidental taps with `UTTERANCE_TOO_SHORT`, producing no draft and therefore no G2 or G3 sample. The harness records `gpu.admit` wait and the preemption outcome on every run, so a violation of this reasoning shows up as data rather than as an unexplained tail.
 
 ## 4. G3 — hotkey release to cleaned visible draft (500 ms p95)
 
@@ -127,7 +131,7 @@ The Tailscale target is 560 ms and is reported alongside the measured link RTT s
 - Every segment above is an `System.Diagnostics.Activity` span with the exact name in the tables, emitted to a local ETW listener. Names are stable identifiers and are asserted by a unit test so a rename cannot silently break the harness.
 - Timestamps use `Stopwatch.GetTimestamp()` (QPC) on Windows and `System.nanoTime()` on Android. Wall-clock time is never used for measurement.
 - Cross-device spans are stitched using a clock offset estimated from 20 `Ping`/`Pong` round trips at connection time, taking the minimum-RTT sample. The residual offset error is reported with every phone measurement and any run with an estimated offset error above 3 ms is discarded.
-- The harness records, per run: every segment, GPU queue depth at admission, VRAM high-water mark, preemption count, runner `computeMs`, and whether the run was warm.
+- The harness records, per run: every segment, GPU queue depth at admission, VRAM high-water mark, whether the GPU interactive window was already clear at ASR admission, the preemption outcome (`NoPreemption`, `AcknowledgedCancel`, `TerminatedAndExited`, `SlotStuck`) and its wall time, runner `computeMs`, and whether the run was warm.
 - The desktop widget exposes the last run's segment breakdown in tray diagnostics so a user can report a slow path with data.
 
 ## 8. Budget violation policy
@@ -138,6 +142,8 @@ The Tailscale target is 560 ms and is reported alongside the measured link RTT s
 | ASR job exceeds its 200 ms deadline | Job cancelled, `ASR_UNAVAILABLE` for this utterance, error state shown; nothing is guessed |
 | Cleanup job exceeds its 260 ms deadline | Job cancelled, draft is the raw transcript with `cleanupApplied: false`; confirmation gate unchanged |
 | TTS first chunk exceeds 200 ms | Chunk still played; the run is counted against G4 |
+| GPU slot cannot be evicted (`GPU_SLOT_STUCK`) | The interactive job fails rather than running concurrently; the run is recorded as a failure, not as a slow success |
+| Utterance shorter than `minUtteranceMs` (250) | `UTTERANCE_TOO_SHORT`, no draft, no G2 or G3 sample; counted separately so an unexpected rate is visible |
 | p95 regression above the gate in CI-style benchmark runs | The task fails its completion gate; see `docs/performance/BENCHMARK_PLAN.md` section 8 |
 
 No degradation path shortens or skips the confirmation gate. Latency is optimized only after correctness, confirmation, security, and privacy gates pass (`AGENTS.md`).

@@ -51,11 +51,16 @@ Three facts define the system:
 
 1. **The PC is the only inference and agent server.** The phone captures, displays, and approves. No model runs on the phone and no adapter code exists there.
 2. **The desktop UI is a protocol client.** It speaks the same WebSocket protocol as the phone, so there is exactly one orchestration path and exactly one confirmation implementation.
-3. **Nothing sends without a consumed confirmation.** An adapter cannot be handed prompt text without a `ConfirmationReceipt`, and a receipt exists only after Core validated ten ordered checks against a single-use, MAC-bound confirmation.
+3. **Nothing sends without a consumed confirmation.** An adapter cannot be handed prompt text without a `ConfirmationReceipt`, and a receipt exists only after Core validated ten ordered checks against a single-use, MAC-bound confirmation. A confirmation always names an explicit session the user created or resumed; Core never creates a provider session as a side effect.
+
+Two boundaries follow from those facts and are stated here because they constrain every later task:
+
+- **Optimus holds no provider credentials.** Adapters drive a CLI the user already authenticated in the provider's own tool. Optimus reports `PROVIDER_AUTH_REQUIRED` and never collects, stores, or injects a token.
+- **Nothing about a prompt is persisted except the opt-in text history and a session title.** Queues are in-memory and are reported as dropped after a restart; routine audio is never written at all.
 
 ## The warm path in one paragraph
 
-The user holds the hotkey. The Shell starts an already-initialized WASAPI client and streams 20 ms PCM frames to Core, which streams them to the ASR runner. On release, the ASR runner finalizes, Core normalizes and applies the glossary, then the cleanup runner produces a conservative draft that may remove fillers and repair punctuation but may not change intent. Core sends a `PromptDraft`. The user picks an explicit destination and asks for confirmation; Core issues a `ConfirmationRequest` bound to the exact text, destination, session, device, expiry, and a one-time nonce. The user confirms, the device echoes the exact text it displayed, Core validates and consumes the confirmation, and only then does a sender adapter receive a `ConfirmedPrompt`. The whole path to a visible draft is budgeted at 500 ms p95.
+The user holds the hotkey. The Shell starts an already-initialized WASAPI client and streams 20 ms PCM frames to Core, which streams them to the ASR runner; accepting the capture also clears the GPU slot of speech and background work so the interactive path never waits for an eviction. On release, the ASR runner finalizes, Core normalizes and applies the glossary, then the cleanup runner produces a conservative draft that may remove fillers and repair punctuation but may not change intent. Core sends a `PromptDraft`. The user picks an explicit destination and an explicit session, then asks for confirmation; Core issues a `ConfirmationRequest` bound to the exact text, destination, session, device, expiry, and a one-time nonce. The user confirms, the device echoes the exact bytes it rendered from one immutable view model, Core validates and consumes the confirmation, and only then does a sender adapter receive a `ConfirmedPrompt`. The whole path to a visible draft is budgeted at 500 ms p95.
 
 ## Non-negotiables
 

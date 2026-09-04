@@ -47,6 +47,7 @@ The implementer may create or modify only:
 
 - ADR-001 section 5 fixes the .NET assemblies and the five dependency rules.
 - ADR-001 section 6 fixes the Android modules and their two dependency rules.
+- ADR-003 section 3 fixes the Android TLS client stack (OkHttp with a custom SPKI trust manager) and the signature algorithm (ECDSA P-256 with SHA-256). **T002 adds neither**: no OkHttp dependency, no cryptography code. T021 adds OkHttp to the version catalog when it implements the transport. This is listed here only so the scaffold's dependency allow list is not mistaken for a rejection of those choices.
 - `docs/BACKLOG.md` fixes which later task owns each area; this task creates directories and placeholders only.
 - No production implementation is introduced. A placeholder is a type or file whose only purpose is to make the project compile and be referenced by a test.
 
@@ -167,7 +168,7 @@ If `TreatWarningsAsErrors` causes a build failure in generated WPF or Web SDK co
 
 Rules:
 
-- No other NuGet package may be added in this task, including mocking, assertion, architecture-testing, logging, or serialization libraries. `System.Text.Json` comes from the framework and needs no package.
+- No other NuGet package may be added in this task, including mocking, assertion, architecture-testing, logging, cryptography, or serialization libraries. `System.Text.Json` and `System.Security.Cryptography` come from the framework and need no package.
 - `NuGet.config` pins `nuget.org` as the only source and clears inherited sources.
 - No `PackageReference` may carry an inline `Version`; central management supplies it.
 - Adding any package outside this table is a blocker to report to Claude Opus 5, not a decision to make.
@@ -178,7 +179,7 @@ Exactly one file per product project, no more:
 
 | Project | File | Content |
 | --- | --- | --- |
-| `Optimus.Contracts` | `ProtocolVersion.cs` | `public static class ProtocolVersion` with `public const int Major = 1;`, `public const int Minor = 0;`, `public const string Current = "1.0";`, `public const string SubProtocol = "optimus.v1";` |
+| `Optimus.Contracts` | `ProtocolVersion.cs` | `public static class ProtocolVersion` with `public const int Major = 1;`, `public const int Minor = 0;`, `public const string Current = "1.0";`, `public const string SubProtocol = "optimus.v1";`. Nothing else: message types are T003 |
 | `Optimus.Client` | `ClientPlaceholder.cs` | `public static class ClientPlaceholder` with `public const string OwnedBy = "T004";` |
 | `Optimus.Inference` | `InferencePlaceholder.cs` | same shape, `OwnedBy = "T007"` |
 | `Optimus.Providers` | `ProvidersPlaceholder.cs` | same shape, `OwnedBy = "T016"` |
@@ -300,7 +301,7 @@ Pinned test dependencies, declared in the version catalog:
 | `androidx.compose:compose-bom` | `2024.10.01` |
 | `androidx.compose.ui:ui`, `ui-tooling-preview`, `androidx.compose.material3:material3` | from the BOM, no explicit version |
 
-No other Android dependency may be added in this task.
+No other Android dependency may be added in this task. In particular, do not add OkHttp, a cryptography library, a serialization library, dependency injection, or navigation; each arrives with the task that needs it (`docs/BACKLOG.md`).
 
 ### 10. Tree READMEs
 
@@ -321,7 +322,7 @@ Each of `src/README.md`, `android/README.md`, `runners/README.md`, `benchmarks/R
 11. `git status --short` shows no untracked build output, no `local.properties`, no `.gradle/`, no `bin/` or `obj/`.
 12. `git diff --check` reports nothing.
 13. No file outside the ownership list in this contract is modified.
-14. No protocol type, endpoint, runner, adapter, hotkey, audio, or Compose screen beyond `MainActivity` exists in the diff.
+14. No protocol type, endpoint, runner, adapter, hotkey, audio, cryptography, networking, or Compose screen beyond `MainActivity` exists in the diff.
 
 ## Required tests and commands
 

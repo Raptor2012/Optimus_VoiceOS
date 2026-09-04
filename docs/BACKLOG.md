@@ -21,11 +21,11 @@ A task contract is written by Claude Opus 5 and set to `READY` before its worktr
 
 | ID | Title | Owner | Reviewer | Depends on | Owned subsystem | Completion gate |
 | --- | --- | --- | --- | --- | --- | --- |
-| T003 | Protocol contracts, canonical encoding, and conformance vectors | Gemini | Sol | T002 | `Optimus.Contracts`, Android `:core:protocol`, `tests/protocol-vectors/` | Both platforms pass every vector directory in `docs/specs/WIRE_PROTOCOL.md` section 9 |
-| T004 | Kestrel host, device endpoint, negotiation, resume, error model | Gemini | Sol | T003 | `Optimus.Service`, device endpoint, `Optimus.Client` | Integration tests in ADR-002 section "Verification" pass; listener binds loopback only |
-| T005 | Desktop shell, hotkey, floating widget, and state machine | Gemini | Sol | T004 | `Optimus.Shell` | All ten device states in `docs/specs/WIRE_PROTOCOL.md` section 7 render; G1 measured below 50 ms p95 |
+| T003 | Protocol contracts, canonical encoding, and conformance vectors | Gemini | Sol | T002 | `Optimus.Contracts`, Android `:core:protocol`, `tests/protocol-vectors/` | Both platforms pass every vector directory in `docs/specs/WIRE_PROTOCOL.md` section 9, including the `signatures/` ECDSA P-256 vectors and the non-null `sessionId` confirmation vectors |
+| T004 | Kestrel host, device endpoint, negotiation, resume, error model | Gemini | Sol | T003 | `Optimus.Service`, device endpoint, `Optimus.Client` | Integration tests in ADR-002 section "Verification" pass; the server sends `Challenge` first and rejects a reused or unissued challenge; listener binds loopback only |
+| T005 | Desktop shell, hotkey, floating widget, and state machine | Gemini | Sol | T004 | `Optimus.Shell` | All ten device states in `docs/specs/WIRE_PROTOCOL.md` section 7 render; the confirmation view model is immutable and feeds both render and echo; G1 measured below 50 ms p95 |
 | T006 | WASAPI capture pipeline, VAD, framing, and playback | Gemini | Sol | T005 | `Optimus.Shell` audio components | 20 ms framing matches the binary header spec; no audio path writes to disk; G1 holds with capture active |
-| T007 | Runner supervisor, named-pipe transport, and GPU scheduler | **Opus** | Sol | T004 | `Optimus.Inference` | All ADR-004 verification tests pass, including preemption within 100 ms and the 5-in-5 terminal restart rule |
+| T007 | Runner supervisor, named-pipe transport, and GPU scheduler | **Opus** | Sol | T004 | `Optimus.Inference` | All ADR-004 verification tests pass, including the four preemption outcomes, a counter proving no two leases are ever concurrently live, the interactive window, and the 5-in-5 terminal restart rule |
 
 ## Milestone 3 — Speech, cleanup, and model selection
 
@@ -34,7 +34,7 @@ A task contract is written by Claude Opus 5 and set to `READY` before its worktr
 | T008 | ASR runner host and streaming transcription | Gemini | Sol | T006, T007 | `runners/asr`, `IAsrRunner` | Streaming decode with a flat tail-latency slope; cancelled jobs yield no partial transcript |
 | T009 | Cleanup runner, prompt template, and intent guard | Gemini | Sol | T008 | `runners/cleanup`, `ICleanupRunner` | Golden-suite harness runs; cleanup failure degrades to the raw transcript with the confirmation gate intact |
 | T010 | Glossary, normalization, and identifier formatting | Gemini | Sol | T009 | Core text pipeline, glossary storage and settings UI | Glossary corrections are acoustically grounded and never introduce content absent from the transcript |
-| T011 | Benchmark harness, corpora, and reporting | Gemini | Sol | T009 | `benchmarks/`, harness CLI, `--verify` and `--regression` modes | Produces every artifact in `docs/performance/BENCHMARK_PLAN.md` section 7 and reproduces a recorded run |
+| T011 | Benchmark harness, corpora, and reporting | Gemini | Sol | T009 | `benchmarks/`, harness CLI, `--verify` and `--regression` modes | Produces every artifact in `docs/performance/BENCHMARK_PLAN.md` section 7, runs the `active-tts-to-hotkey` and `stuck-tts-to-hotkey` scenarios, and reproduces a recorded run |
 | T012 | ASR and cleanup model selection | **Opus** | Sol | T011 | `ADR-006`, model configuration defaults | Winners chosen only from recorded target-hardware results; every correctness gate passes |
 
 ## Milestone 4 — Voice identity, TTS, and event summaries
@@ -49,20 +49,20 @@ A task contract is written by Claude Opus 5 and set to `READY` before its worktr
 
 | ID | Title | Owner | Reviewer | Depends on | Owned subsystem | Completion gate |
 | --- | --- | --- | --- | --- | --- | --- |
-| T016 | Sender-adapter contract, conformance suite, and Claude Code adapter | Gemini | Sol | T004 | `Optimus.Providers`, `Optimus.Providers.Conformance`, `Providers/ClaudeCode/` | Conformance suite passes; `MAPPING.md` completeness test passes; hostile-output corpus causes no state transition |
-| T017 | Codex adapter | Gemini | Sol | T016 | `Providers/Codex/` | Same conformance suite passes with no change to Core, protocol, or UI |
-| T018 | Session store, Queue, Steer, questions, and cancellation | **Opus** | Sol | T016 | Core session subsystem | All ADR-005 section 5 and 6 verification tests pass; sessions survive a Core restart |
-| T019 | Confirmation authority and destination binding | **Opus** | Sol | T018 | Core confirmation subsystem | Every one of the ten ordered checks has a passing negative test; concurrent double-send admits exactly one |
+| T016 | Sender-adapter contract, conformance suite, and Claude Code adapter | Gemini | Sol | T004 | `Optimus.Providers`, `Optimus.Providers.Conformance`, `Providers/ClaudeCode/` | Conformance suite passes; `MAPPING.md` completeness test passes; hostile-output corpus causes no state transition; the credential-boundary recorder shows no provider credential is read, constructed, or stored |
+| T017 | Codex adapter | Gemini | Sol | T016 | `Providers/Codex/` | Same conformance suite passes, including the credential boundary, with no change to Core, protocol, or UI |
+| T018 | Session store, Queue, Steer, questions, and cancellation | **Opus** | Sol | T016 | Core session subsystem | All ADR-005 section 5 and 6 verification tests pass; session metadata survives a Core restart, queues do not and report `queueDroppedCount`; `NewSession` coalescing and idempotency behave as specified |
+| T019 | Confirmation authority and destination binding | **Opus** | Sol | T018 | Core confirmation subsystem | Every one of the ten ordered checks has a passing negative test; `RequestConfirmation` without a `sessionId` fails `SESSION_REQUIRED` and creates no provider session; concurrent double-send admits exactly one |
 
 ## Milestone 6 — Secure service, pairing, and the phone
 
 | ID | Title | Owner | Reviewer | Depends on | Owned subsystem | Completion gate |
 | --- | --- | --- | --- | --- | --- | --- |
-| T020 | PC identity, QR pairing, device trust, and revocation | **Opus** | Sol | T019 | Core security subsystem, pairing endpoint, tray devices UI | All ADR-003 verification tests pass; replay, expiry, and lockout behave as specified |
-| T021 | Android application foundation, transport, pinning, and pairing | Gemini | Sol | T020 | `:app`, `:core:transport`, `:core:security`, `:feature:pairing` | Pairs with the target PC over LAN and Tailscale; SPKI pin enforced; `allowBackup` false |
+| T020 | PC identity, QR pairing, device trust, and revocation | **Opus** | Sol | T019 | Core security subsystem, pairing endpoint, tray devices UI | All ADR-003 verification tests pass; P-256 signature validation rejects non-canonical DER and high-S; challenge reuse, replay, expiry, and lockout behave as specified; the attestation policy defaults flip correctly when a phone is paired |
+| T021 | Android application foundation, transport, pinning, and pairing | Gemini | Sol | T020 | `:app`, `:core:transport`, `:core:security`, `:feature:pairing` | Pairs with the target PC over LAN and Tailscale using the OkHttp stack and custom SPKI trust manager fixed in ADR-003 section 3; hardware-backed P-256 keys generated; `allowBackup` false |
 | T022 | Android Talk screen: capture, transcript, draft, destination, confirmation | Gemini | Sol | T021 | `:core:audio`, `:feature:talk` | Confirmation card renders the exact text and echoes it byte-for-byte; `FLAG_SECURE` set |
-| T023 | Android Sessions screen, approvals, and biometric attestation | Gemini | Sol | T022 | `:feature:sessions` | Consequential approvals require per-use biometric; replayed responses rejected; notifications carry no draft text |
-| T024 | Privacy, retention, history, and opt-in calibration set | **Opus** | Sol | T022 | Core history and privacy subsystem, settings UI | Filesystem sweep finds no audio outside the calibration directory; clear-history and per-recording delete work |
+| T023 | Android Sessions screen, approvals, and biometric attestation | Gemini | Sol | T022 | `:feature:sessions` | Consequential approvals produce a `DeviceSignature` through a `BiometricPrompt`-bound `CryptoObject`; signatures bound to the approval nonce and connection challenge; replayed responses rejected; notifications carry no draft text |
+| T024 | Privacy, retention, history, and opt-in calibration set | **Opus** | Sol | T022 | Core history and privacy subsystem, settings UI | Filesystem sweep finds no audio outside the calibration directory and no queued prompt text or preview in `sessions.json`; clear-history and per-recording delete work |
 
 ## Milestone 7 — Packaging, recovery, performance, and release
 
@@ -71,7 +71,7 @@ A task contract is written by Claude Opus 5 and set to `READY` before its worktr
 | T025 | Diagnostics, tray settings, and local troubleshooting | Gemini | Sol | T024 | Tray settings, diagnostics export | Export contains counters and coded events only; last-run latency breakdown is visible |
 | T026 | Installer, model distribution, and integrity verification | Gemini | Sol | T025 | Installer project, model manifests | Clean-machine install reaches a working warm path; a flipped weight byte blocks load |
 | T027 | Failure recovery hardening across all processes | **Opus** | Sol | T026 | Cross-process recovery paths | Every recovery behavior in ADR-001 section 4 and ADR-004 section 6 is proven by a kill test |
-| T028 | Performance hardening against the latency budget | **Opus** | Sol | T027 | Warm-path hot spots across subsystems | G1 to G4 pass at p95 on target hardware with the full stack running |
+| T028 | Performance hardening against the latency budget | **Opus** | Sol | T027 | Warm-path hot spots across subsystems | G1 to G4 pass at p95 on target hardware with the full stack running, including G2 and G3 under `active-tts-to-hotkey`, with zero observed concurrent GPU leases |
 | T029 | Release audit: security, privacy, and acceptance gates | **Opus** | Sol | T028 | Release checklist and audit report | Every item in `docs/security/THREAT_MODEL.md` section 8 passes; end-to-end success on the target PC and Pixel 9a over LAN and Tailscale |
 
 ## Parallelism

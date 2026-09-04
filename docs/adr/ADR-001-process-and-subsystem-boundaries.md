@@ -31,11 +31,11 @@ Windows session constraints also apply: GPU access, per-user DPAPI, WASAPI captu
 
 Provider CLIs (Claude Code, Codex) run as child processes of Core, spawned and supervised by their sender adapter.
 
-Optimus is **not** a Windows service. Rationale: session-0 isolation blocks GPU scheduling for interactive workloads, WASAPI device enumeration, per-user DPAPI, and provider CLI credential stores. Core therefore runs as a user-session background process with no window.
+Optimus is **not** a Windows service. Rationale: session-0 isolation blocks GPU scheduling for interactive workloads, WASAPI device enumeration, per-user DPAPI, and the provider CLIs' own per-user credential stores, which Optimus never reads but which the CLI needs (ADR-003 section 8). Core therefore runs as a user-session background process with no window.
 
 ### 2. The desktop UI is a protocol client, not a co-orchestrator
 
-The Shell connects to Core over the **same** WebSocket endpoint and the **same** protocol version the phone uses (`docs/specs/WIRE_PROTOCOL.md`), over `127.0.0.1`, with the same TLS certificate and a local capability token (ADR-003 section 6).
+The Shell connects to Core over the **same** WebSocket endpoint and the **same** protocol version the phone uses (`docs/specs/WIRE_PROTOCOL.md`), over `127.0.0.1`, with the same TLS certificate and a local capability token (ADR-003 section 7).
 
 Consequences that make this the decisive choice:
 
@@ -71,10 +71,10 @@ The measured cost is one loopback WebSocket hop in each direction. The latency b
 
 ### 4. Restart and recovery responsibilities
 
-- **Shell crash.** Core keeps running. Active agent sessions, queued prompts, and phone connections are unaffected. On restart the Shell reconnects, sends `Resume`, and re-renders state from `ServiceStatus` and `SessionList`. Any in-flight capture is abandoned; a partially captured utterance is discarded, never sent.
-- **Core crash.** The Shell detects socket closure, shows the `error` state, and relaunches Core after 1 s (maximum 5 attempts in 5 minutes, then manual). Agent session *metadata* is persisted, so `ResumeSession` can re-attach to provider sessions. In-flight confirmations are lost by design: the confirmation key `K_conf` is memory-only and per-Core-start, so every outstanding confirmation becomes invalid rather than replayable.
+- **Shell crash.** Core keeps running. Active agent sessions, queued prompts, and phone connections are unaffected. On restart the Shell reconnects, sends `Hello` with `resumeDeviceSessionId`, and re-renders state from `ServiceStatus`, `DestinationList`, and `SessionList`. Any in-flight capture is abandoned; a partially captured utterance is discarded, never sent.
+- **Core crash.** The Shell detects socket closure, shows the `error` state, and relaunches Core after 1 s (maximum 5 attempts in 5 minutes, then manual). Agent session *metadata* is persisted, so `ResumeSessionRequest` can re-attach to provider sessions. Two things are deliberately lost: in-flight confirmations, because `K_conf` is memory-only and per-Core-start, so every outstanding confirmation becomes invalid rather than replayable; and queued prompts, because queues are in-memory only (ADR-005 section 6). Each affected session reports `queueDroppedCount` so the loss is visible rather than silent.
 - **Runner crash.** The Core supervisor restarts it (ADR-004 section 6). Core degrades the affected feature and reports it; it never silently retries a user-visible action.
-- **Provider CLI crash.** The owning adapter marks the session `Failed`, emits an `AgentEvent` of kind `Failed`, and offers `ResumeSession`. Core never auto-resends a confirmed prompt.
+- **Provider CLI crash.** The owning adapter marks the session `Failed`, emits an `AgentEvent` of kind `Failed`, and offers `ResumeSessionRequest`. Core never auto-resends a confirmed prompt.
 
 ### 5. Assemblies and dependency direction (.NET)
 

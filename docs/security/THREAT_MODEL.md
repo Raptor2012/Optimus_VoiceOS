@@ -20,9 +20,9 @@ Analysis method: enumerate assets, draw trust boundaries, enumerate attacker cap
 | A2 | Routine audio | Most sensitive capture; may contain background speech | Never written to disk anywhere (ADR-004 section 7) |
 | A3 | Confirmation integrity | The gate that stops an unintended prompt reaching an agent | MAC + pending map + ten ordered checks (ADR-005 section 3) |
 | A4 | Approval integrity | The gate that stops a destructive agent operation | MAC + operation hash + biometric attestation (ADR-005 section 8) |
-| A5 | Device trust material | Ed25519 device and approval keys, server signing key | Hardware-backed Keystore; non-exportable CNG; DPAPI |
+| A5 | Device trust material | ECDSA P-256 device and approval keys, server signing key | Hardware-backed Android Keystore (StrongBox where available); non-exportable Windows CNG |
 | A6 | PC identity key and pin | Impersonating the PC would capture every prompt | Non-exportable CNG key; SPKI pinning on the phone |
-| A7 | Provider credentials | Access to the user's coding agent accounts | DPAPI, never on a command line, never logged |
+| A7 | Provider credentials | Access to the user's coding agent accounts | **Not an Optimus asset.** Credentials stay in the provider's own store; Optimus never reads, copies, persists, or injects them (ADR-003 section 8) |
 | A8 | Agent session control | Sending or steering as the user | Confirmation gate plus authenticated device connection |
 | A9 | Local text event history | Long-lived record of what was asked | User-configurable retention, explicit clear, DACL-restricted |
 | A10 | Calibration recordings (opt-in) | Deliberately retained audio | Explicit per-recording consent, listed, individually deletable |
@@ -62,7 +62,7 @@ Analysis method: enumerate assets, draw trust boundaries, enumerate attacker cap
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
-| Connect to the service and send prompts | Listener binds loopback plus explicitly configured trusted addresses only, never `0.0.0.0` (ADR-003 section 6). Unpaired devices are rejected at `Hello` with `4403`. | An attacker on an explicitly trusted interface still cannot authenticate without a device key. |
+| Connect to the service and send prompts | Listener binds loopback plus explicitly configured trusted addresses only, never `0.0.0.0` (ADR-003 section 7). Unpaired devices are rejected at `Hello` with `4403`. | An attacker on an explicitly trusted interface still cannot authenticate without a device key. |
 | Impersonate the PC to capture prompts | Phone pins the PC SPKI. A rogue listener presents a different key and the TLS session is refused before any data is sent. | A phone that pairs with the attacker's QR by mistake; addressed by T9. |
 | Downgrade or strip TLS | TLS 1.3 only, fixed AEAD suites, `wss` scheme hard-coded, no plaintext fallback path exists in the client. | None material. |
 | Read traffic | TLS 1.3 with forward secrecy. | Endpoint compromise. |
@@ -75,7 +75,8 @@ This is the strongest attacker and cryptography does not defeat it. The design g
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
-| Read the DPAPI secret store | None possible: DPAPI CurrentUser is decryptable by same-user code by definition. | **Accepted and documented.** Provider credentials and device records are exposed to same-user malware. |
+| Read the DPAPI secret store | None possible: DPAPI CurrentUser is decryptable by same-user code by definition. | **Accepted and documented.** Device records (public keys and metadata) are exposed to same-user malware. Provider credentials are not, because Optimus never holds them; the provider's own store carries its own exposure independently of Optimus. |
+| Extract the PC or device signing keys | `K_server_sign` and the certificate key live in non-exportable CNG containers, so the raw private keys are not readable even by same-user code, though the running process can be asked to sign. | Accepted: signing oracle, not key theft. |
 | Read the Shell capability token and connect as a device | Token is DACL-restricted to the user, but same-user code can read it. Core additionally checks that the peer is loopback and runs as the same user SID. | **Accepted.** Same-user malware can drive Optimus as the local Shell. It still cannot bypass a confirmation: it would have to construct a `SendAction` matching a `ConfirmationRequest` it can request, which means it can send prompts. Documented as a residual risk equal in severity to the malware directly running the coding-agent CLI. |
 | Scrape audio buffers from Core memory | Buffers are pooled and zeroed on release, reducing but not removing the window. | Accepted. |
 | Read prompt text from disk | Nothing writes drafts or audio to disk except opt-in history and calibration. | History is readable if enabled; retention control and clear-history limit exposure. |
@@ -97,7 +98,7 @@ The threat-model position is: **once code runs as the user, Optimus offers no ad
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
 | Send prompts from the stolen phone | `optimus_device_v1` requires `setUnlockedDeviceRequired(true)`, so signing fails on a locked device. | A thief who knows the screen lock has full device authority; identical to any other app. Mitigated by remote revoke from the PC. |
-| Approve a consequential operation | `optimus_approval_v1` requires `AUTHENTICATORS_BIOMETRIC_STRONG` per use and is invalidated by new biometric enrolment. | A thief with a working biometric match. Not defensible. |
+| Approve a consequential operation | `optimus_approval_v1` is a hardware-backed P-256 key requiring `AUTHENTICATORS_BIOMETRIC_STRONG` per use through a bound `CryptoObject`, and is invalidated by new biometric enrolment. | A thief with a working biometric match. Not defensible. |
 | Read past prompts on the phone | The phone caches only the current session view; history lives on the PC and is fetched on demand over an authenticated connection. | Screen content visible while unlocked. |
 | Extract the device key | Keys are non-exportable, StrongBox when available. | Hardware attack on the secure element. Accepted. |
 | Read approval details from the lock screen | Background approval notifications show only the session title and risk level until unlock and biometric success (ADR-005 section 8). | Title text is provider-derived and sanitized; still visible. |
@@ -107,11 +108,11 @@ The threat-model position is: **once code runs as the user, Optimus offers no ad
 
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
-| Replay a captured `Hello` on a new connection | The signature covers the RFC 5705 TLS exporter value of the specific connection; a new connection has different keying material (ADR-003 section 5). | None material. |
+| Replay a captured `Hello` on a new connection | The signature covers a single-use `serverChallenge` that Core issued for that one connection and consumed (ADR-003 section 6). A new connection issues a different challenge, and the captured `Hello` echoes one that will never be valid again. | None material. |
 | Replay `Hello` on the same connection | 16-byte nonce cache per device for 5 minutes and a 60 s timestamp window. | None material. |
 | Replay a `SendAction` | Confirmation entries are single-use and consumed atomically; a repeat yields `CONFIRMATION_ALREADY_USED`. A different envelope `id` does not help, because consumption is keyed on `confirmationId`. | None material. |
-| Replay an `ApprovalResponse` | Approval entries are single-use; attestation includes the connection exporter and a 60 s freshness window. | None material. |
-| Replay a pairing `PairRequest` | `psk` is single-use, expires in 120 s, and the proof covers the exporter. | None material. |
+| Replay an `ApprovalResponse` | Approval entries are single-use; a `DeviceSignature` attestation covers the approval's own `nonce` and this connection's challenge, plus a 60 s freshness window. | A `LocalVerification` attestation is not cryptographic; see R8. |
+| Replay a pairing `PairRequest` | `psk` is single-use and expires in 120 s, and the proof covers the single-use `PairChallenge` for that connection. | None material. |
 | Replay after a Core restart | `K_conf` is regenerated per start, so every pre-restart confirmation and approval MAC fails. | Users must re-confirm after a restart. Intended. |
 
 ### T6. Stale, racing, or mismatched approval
@@ -131,7 +132,7 @@ The coding agent reads repositories, issues, and web content, so its output must
 | Threat | Mitigation | Residual |
 | --- | --- | --- |
 | Output instructs Optimus to send a prompt, change destination, or approve | Structurally impossible: provider output is data on a one-way path to display and speech. Every state transition requires an authenticated device message (ADR-005 section 9). | None material. |
-| Output instructs the *user* to approve something dangerous | Risk level is computed by the adapter from the operation class, never from provider text; `Other` maps to `Consequential`; consequential approvals require biometric confirmation of a specific hashed operation. | Social engineering of the user remains possible. Mitigated by showing operation class, not just provider prose. |
+| Output instructs the *user* to approve something dangerous | Risk level is computed by the adapter from the operation class, never from provider text; `Other` maps to `Consequential`; consequential approvals require a per-use biometric signature over a specific hashed operation on a paired phone, and that is the default routing once a phone exists. | Social engineering of the user remains possible. Mitigated by showing operation class, not just provider prose. |
 | Output contains terminal escapes, bidirectional overrides, or homoglyph tricks to disguise an operation | Control characters other than newline and tab are stripped, bidirectional override characters are stripped, output is rendered as plain text with no markup, link, or image resolution. | Homoglyph confusion in a path name remains possible; the operation class and workspace-relative rendering reduce it. |
 | Output floods the UI or the speech queue | 4 KiB display cap, 600 character speech cap, 5 s coalescing, one utterance per 4 s per session. | None material. |
 | Output leaks into logs and then to a third party | Adapters must not log `RawText`; diagnostics record kind, ref, and byte length. | Accepted, verified by T029 audit. |
@@ -146,7 +147,8 @@ The coding agent reads repositories, issues, and web content, so its output must
 | Android notifications | Draft and prompt text never appear in a notification. Approval notifications carry title and risk level only until unlock. |
 | Screen recording and screenshots | The Android Talk screen sets `FLAG_SECURE` while a draft or confirmation is displayed. |
 | Clipboard | Optimus never copies drafts to the clipboard implicitly. |
-| History | Text history retention is user-configurable with a clear-history control; default retention is 30 days. |
+| History | Text history retention is user-configurable with a clear-history control; default retention is 30 days. Session titles are the only prompt-derived text in `sessions.json`, and Clear History resets them. |
+| Queued prompts | Queues are in-memory only and are never written to disk. A Core restart discards them and reports a count, not the text (ADR-005 section 6). |
 | Backups | `android:allowBackup="false"` and data-extraction rules exclude all app storage. |
 | Diagnostics bundle | The diagnostics export contains counters, timings, versions, and coded events only, and is shown to the user before it is written. |
 
@@ -190,6 +192,8 @@ The coding agent reads repositories, issues, and web content, so its output must
 | R5 | A LAN attacker on an explicitly trusted interface can consume bandwidth | Availability, not integrity | Rate limits; desktop path unaffected |
 | R6 | Runner binaries are not signature-verified in v1 | Scope; falls under T2 anyway | Model hash verification; code signing tracked in T026 |
 | R7 | Homoglyph or path confusion in a displayed operation | Complete defence needs a Unicode confusable policy | Bidirectional overrides stripped; workspace-relative rendering; operation class shown |
+| R8 | A compromised paired client can render misleading text while echoing the correct `displayedText`, and can assert `LocalVerification` on the desktop without a real Windows Hello prompt | No client-side check can attest to what was painted on screen, and `UserConsentVerifier` produces no signature to bind. This is the same boundary as R1 | One immutable confirmation view model feeding both render and echo; server-side exact-content validation; `RequireDeviceSignature` is the default policy once a phone is paired, moving consequential decisions to a device that signs in hardware |
+| R9 | A Core restart discards queued prompts | The alternative is persisting confirmed prompt bodies to disk, which costs every user a permanent record to avoid an occasional re-dictation | `queueDroppedCount` reported per session so the loss is visible, never silent |
 
 ## 8. Security tests required before release
 
@@ -197,11 +201,15 @@ Every item below is a release gate in T029:
 
 1. Confirmation negative-path suite: one test per failure code in `docs/specs/WIRE_PROTOCOL.md` section 8, confirmation and approval groups.
 2. Concurrency: two simultaneous `SendAction` messages for one confirmation admit exactly one; two devices approving one approval resolve exactly once.
-3. Replay: recorded `Hello`, `SendAction`, and `ApprovalResponse` replayed on a fresh connection all fail with the expected codes.
+3. Replay: recorded `Hello`, `PairRequest`, `SendAction`, and `ApprovalResponse` replayed on a fresh connection all fail with the expected codes, and a `Hello` replayed on its own connection fails because the challenge was consumed.
 4. Pinning: connecting to a listener with a different SPKI fails before any application data is sent.
 5. Binding: assert the listener never opens `0.0.0.0`; assert a `localToken` from a non-loopback peer is rejected.
 6. Privacy sweep: after 50 utterances and 5 crashes, no audio file, draft text, or transcript exists outside the opt-in calibration directory; grep logs and the diagnostics bundle for known canary strings spoken during the run.
 7. Hostile provider output corpus: escapes, bidirectional overrides, 1 MB output, instruction-like text, and homoglyph paths cause no state transition, no log leak, and correct truncation.
 8. Revocation: a revoked device is disconnected, and its pending confirmations, approvals, and queued prompts are invalidated.
 9. Model integrity: a single flipped byte in a weight file prevents load with `MODEL_INTEGRITY_FAILED`.
-10. Android: `allowBackup` false, `FLAG_SECURE` on draft and confirmation screens, approval key requires per-use biometric, notification content contains no draft text.
+10. Android: `allowBackup` false, `FLAG_SECURE` on draft and confirmation screens, approval key is hardware-backed P-256 requiring per-use biometric, notification content contains no draft text.
+11. Attestation policy: a desktop `LocalVerification` is refused under `RequireDeviceSignature`, refused on a non-loopback connection, refused for a mismatched `approvalId`, refused after 60 s, and refused on a second presentation.
+12. Provider credential boundary: a filesystem and process-launch recorder over a full adapter session shows no read of a provider credential path, no credential-bearing argument or environment variable, and no provider secret in any Optimus-owned file.
+13. Queue privacy: after 20 queued prompts and a forced Core restart, `sessions.json` contains no queued text or preview, every queue is empty, and each affected session reports `queueDroppedCount` exactly once.
+14. GPU exclusivity: a fault-injection run in which the TTS runner ignores `cancel` shows the ASR lease is granted only after verified process exit, never concurrently, and that the stuck path surfaces `GPU_SLOT_STUCK` rather than overlapping.

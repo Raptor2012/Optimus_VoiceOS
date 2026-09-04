@@ -22,13 +22,16 @@ The message *catalogue* is specified in `docs/specs/WIRE_PROTOCOL.md`. This ADR 
 - TLS 1.3 only. Cipher suites limited to `TLS_AES_128_GCM_SHA256` and `TLS_AES_256_GCM_SHA384`. Certificate and pinning rules are in ADR-003.
 - Version string format is `MAJOR.MINOR`, currently `1.0`. MAJOR changes are breaking. MINOR changes are additive only.
 
-Negotiation is the first exchange on every connection:
+Negotiation is the first exchange on every connection, and the **server speaks first**:
 
-1. Client sends `Hello` with `protocolMajor`, `protocolMinorMax`, `deviceId`, `clientBuild`, and the authentication material from ADR-003 section 5.
-2. Core replies `Welcome` with the negotiated `protocolVersion` (`MAJOR.min(clientMinorMax, serverMinor)`), `serverBuild`, `deviceSessionId`, `serverTimeUtc`, and the effective `limits` object.
-3. If `protocolMajor` differs from the server major, Core closes with code `4406` and reason `UNSUPPORTED_VERSION` before any other message.
+1. Core sends `Challenge` with a single-use `serverChallenge` and `serverTimeUtc`, immediately after the WebSocket opens (ADR-003 section 6). The client must not send anything before receiving it.
+2. Client sends `Hello` with `protocolMajor`, `protocolMinorMax`, `deviceId`, `clientBuild`, and the authentication material from ADR-003 section 6, which echoes and signs over `serverChallenge`.
+3. Core replies `Welcome` with the negotiated `protocolVersion` (`MAJOR.min(clientMinorMax, serverMinor)`), `serverBuild`, `deviceSessionId`, `serverTimeUtc`, `serverAuth`, and the effective `limits` object.
+4. If `protocolMajor` differs from the server major, Core closes with code `4406` and reason `UNSUPPORTED_VERSION` before any other message.
 
-No message other than `Hello`, `Welcome`, `Error`, or a close frame may precede a successful `Welcome`. Core drops a connection that sends anything else first, with code `4400`.
+The server speaks first so the connection carries a fresh anti-replay binding that does not depend on TLS keying-material export, which the Android WebSocket stack cannot reach (ADR-003 section 3).
+
+No message other than `Challenge`, `Hello`, `Welcome`, `Error`, or a close frame may precede a successful `Welcome`. Core drops a connection that sends anything else first, with code `4400`. A `Hello` that arrives before the client could have received `Challenge`, or that echoes a challenge Core did not issue on this connection, is `4401`.
 
 ### 2. Text-frame envelope
 
@@ -53,7 +56,7 @@ All control messages are WebSocket text frames containing one UTF-8 JSON object:
 | `id` | string | ULID, unique per sender per connection lifetime. Used for idempotency. |
 | `corr` | string or null | The `id` of the message this responds to or continues. |
 | `seq` | integer | Monotonically increasing per direction, starting at 1, never reset while a `deviceSessionId` lives. Used for resume replay. |
-| `ts` | string | RFC 3339 UTC with millisecond precision. Informational only; never used for security decisions except the freshness checks defined in ADR-003 section 5 and ADR-005 section 3, which use the dedicated signed timestamps in those payloads. |
+| `ts` | string | RFC 3339 UTC with millisecond precision. Informational only; never used for security decisions except the freshness checks defined in ADR-003 section 6 and ADR-005 section 3, which use the dedicated signed timestamps in those payloads. |
 | `payload` | object | Message-specific body. Absent means empty object. |
 
 Serialization rules (identical on both platforms, defined once in `Optimus.Contracts` and mirrored in `:core:protocol`):
@@ -93,7 +96,7 @@ Audio uses WebSocket binary frames with a fixed 16-byte little-endian header:
 
 - WebSocket guarantees ordering within a direction. The protocol adds no reordering tolerance for control messages and relies on `seq` only for resume replay.
 - Request/response pairs are correlated by `corr`. A response always carries `corr` equal to the request `id`.
-- Every client-to-server message that changes state (`SendAction`, `RespondToApproval`, `CreateSession`, `ResumeSession`, `CancelRequest`, `NewSession`, `SetDestination`) is idempotent by `id`. Core keeps a per-device dedupe set of the last 512 ids for 10 minutes. A repeat returns the original response with `duplicate: true` and performs no new work.
+- Every client-to-server message that changes state (`SendAction`, `ApprovalResponse`, `NewSession`, `ResumeSessionRequest`, `CancelRequest`, `SetDestination`, `RequestConfirmation`, `EditDraft`, `ClearHistory`) is idempotent by `id`. Core keeps a per-device dedupe set of the last 512 ids for 10 minutes. A repeat returns the original response with `duplicate: true` and performs no new work.
 - Idempotency is not a substitute for confirmation single-use. A `SendAction` replayed with a *different* `id` but the same `confirmationId` is rejected as `CONFIRMATION_ALREADY_USED` (ADR-005 section 3).
 
 ### 5. Keepalive, timeouts, and reconnection
@@ -110,9 +113,9 @@ Audio uses WebSocket binary frames with a fixed 16-byte little-endian header:
 
 Reconnect procedure:
 
-1. Client reconnects and sends `Hello` including `resumeDeviceSessionId` and `lastServerSeq`.
+1. Client reconnects, receives a fresh `Challenge`, and sends `Hello` including `resumeDeviceSessionId`, `lastServerSeq`, and a signature over the new challenge. A `Hello` captured from the previous connection cannot be reused.
 2. If the `deviceSessionId` is still live and within the resume window, Core replies `Welcome` with `resumed: true` and replays buffered messages with `seq > lastServerSeq`.
-3. If the buffer no longer covers `lastServerSeq`, Core replies `resumed: false` and sends a full `ServiceStatus`, `SessionList`, and `DestinationList` snapshot. The device discards local optimistic state.
+3. If the buffer no longer covers `lastServerSeq`, Core replies `resumed: false` and sends a full `ServiceStatus`, `SessionList`, and `DestinationList` snapshot. The device discards local optimistic state, including any local copy of a queued prompt.
 4. **Audio streams never resume.** Any stream open at disconnect is aborted and the device is told `AudioAborted`. A partially captured utterance is discarded and never transcribed or sent.
 5. In-flight confirmations survive a resume only if unexpired; the device re-renders them from the replayed `ConfirmationRequest`.
 
@@ -201,6 +204,7 @@ Exceeding a rate limit yields an `Error` with `RATE_LIMITED` and `retryAfterMs`.
 - **Opus-compressed audio uplink.** Rejected for v1: encode and decode add roughly 20 to 40 ms to a 500 ms budget, and 256 kbit/s raw PCM is trivial on LAN and acceptable on Tailscale. Revisit only if a measured link cannot sustain it, which would require a new ADR.
 - **HTTP/2 or gRPC streaming.** Rejected: WebSocket is fixed by `PROJECT_PLAN.md` and gives simpler Android lifecycle behavior and simpler pinning.
 - **Version negotiation by URL only.** Rejected: minor-version negotiation is needed for additive evolution without a new endpoint.
+- **Client-speaks-first negotiation with TLS channel binding instead of a server challenge.** Rejected on feasibility: the exporter value that binding needs is not reachable from the Android WebSocket stack (ADR-003 section 3). Having the server speak first costs nothing on an already-open socket and gives an anti-replay binding that protocol vectors can exercise offline.
 
 ## Consequences
 
@@ -211,8 +215,8 @@ Exceeding a rate limit yields an `Error` with `RATE_LIMITED` and `retryAfterMs`.
 
 ## Verification
 
-- T003 delivers a shared vector suite: canonical encoding vectors, envelope validation vectors, binary-header vectors, and version-negotiation vectors, executed by both `Optimus.Contracts.Tests` and the Android `:core:protocol` unit tests from the same JSON fixture files under `tests/protocol-vectors/`.
-- T004 adds integration tests for: major mismatch closes 4406; unknown device-to-server type yields `UNKNOWN_MESSAGE_TYPE` without closing; unknown property inside `SendAction` yields `VALIDATION_FAILED`; duplicate `id` returns `duplicate: true` without side effects; second connection for one `deviceId` closes the first with 4409.
+- T003 delivers a shared vector suite: canonical encoding vectors, envelope validation vectors, binary-header vectors, signature vectors, and negotiation vectors including `Challenge`, executed by both `Optimus.Contracts.Tests` and the Android `:core:protocol` unit tests from the same JSON fixture files under `tests/protocol-vectors/`.
+- T004 adds integration tests for: `Challenge` is the first frame on every connection; a `Hello` sent before `Challenge`, echoing an unissued challenge, or echoing an already-consumed challenge is `4401`; a second `Hello` on one connection is `4400`; major mismatch closes 4406; unknown device-to-server type yields `UNKNOWN_MESSAGE_TYPE` without closing; unknown property inside `SendAction` yields `VALIDATION_FAILED`; duplicate `id` returns `duplicate: true` without side effects; second connection for one `deviceId` closes the first with 4409.
 - T027 adds resume tests covering replay coverage, buffer overflow to snapshot, and audio-stream abort on reconnect.
 
 ## Related documents

@@ -57,9 +57,18 @@ Composition: 40 clean inputs that must come back unchanged, 30 filler-heavy, 20 
 
 Event summaries drawn from the real summary templates plus 20 free-form sentences, covering short interjections, numbers, identifiers, and long sentences, used for TTS latency, RTF, and intelligibility.
 
-### 2.4 End-to-end scenario set, 25 scenarios
+### 2.4 End-to-end scenario set, 27 scenarios
 
 Full runs from hotkey press to `SendResult` against a stub adapter, on desktop and on the Pixel 9a, over LAN and Tailscale, used for the composite gates and the release check.
+
+Two of the 27 exist specifically to exercise the worst interactive GPU contention path, which the earlier draft of this plan did not cover:
+
+| Scenario | Setup | Asserts |
+| --- | --- | --- |
+| `active-tts-to-hotkey` | A `P1Speech` TTS job is mid-utterance when the hotkey is pressed | G2 and G3 still pass; the preemption outcome and its wall time are recorded; the ASR lease was granted only after acknowledged cancellation or verified exit |
+| `stuck-tts-to-hotkey` | Fault injection makes the TTS runner ignore `cancel` | The lease is granted only after verified process exit; no two leases are ever concurrently live; the pathological case surfaces `GPU_SLOT_STUCK` and a failed run rather than overlapping GPU work |
+
+Both scenarios run at three utterance lengths (0.4 s, 2 s, 8 s) so the interaction between the 160 ms worst-case preemption and the 250 ms minimum utterance is measured rather than assumed.
 
 ## 3. Hardware and environment conditions
 
@@ -88,6 +97,7 @@ For each candidate model in a category:
 4. **Repetitions.** 5 independent sessions per candidate, each preceded by a Core restart and a 120 s thermal settle. Total warm samples per candidate: 200 utterances x 2 microphones x 5 sessions = 2000 for ASR; 150 x 5 = 750 for cleanup; 60 x 5 = 300 for TTS.
 5. **Interleaving.** Candidates are run in a rotating order across sessions (A,B,C / B,C,A / C,A,B / …) so thermal drift cannot systematically favor one candidate.
 6. **Contention run.** One additional session per candidate with a representative background load (an IDE, a browser with 10 tabs, and an idle provider CLI) to record the degradation factor. Contention runs do not decide the winner but must not exceed 1.5x the clean p95, or the candidate is flagged.
+7. **GPU contention run.** One additional session per candidate executing the `active-tts-to-hotkey` scenario from section 2.4 on every utterance, so the selected model is evaluated against the real interactive path rather than an idle GPU. Every run records the preemption outcome, the `gpu.admit` wait, and whether the interactive window was already clear at admission.
 
 ## 5. Metrics and statistics
 
@@ -120,6 +130,8 @@ A candidate is eliminated by any gate failure regardless of speed.
 
 | Gate | Threshold |
 | --- | --- |
+| G2 and G3 composite p95 under `active-tts-to-hotkey` | must pass the same 250 ms and 500 ms thresholds as the idle-GPU path |
+| Concurrent GPU leases observed | exactly 0 across every run, including `stuck-tts-to-hotkey` |
 | Normalized WER on the coding corpus | at most 8 percent |
 | Critical-token accuracy | at least 97 percent |
 | Intent-changing transcription errors | exactly 0 |
@@ -196,4 +208,4 @@ Once a winner is selected:
 
 ## 9. Release benchmark
 
-Before release (T029), the end-to-end scenario set runs on the target machine and the Pixel 9a over both LAN and Tailscale, and the report records G1 to G4, the phone derived targets, the network RTT, and the full gate table. A release requires every mandatory gate to pass on the target hardware, with the run artifacts attached to the release audit.
+Before release (T029), the end-to-end scenario set runs on the target machine and the Pixel 9a over both LAN and Tailscale, and the report records G1 to G4, the phone derived targets, the network RTT, the preemption outcome distribution, and the full gate table. A release requires every mandatory gate to pass on the target hardware, including G2 and G3 under `active-tts-to-hotkey` and zero observed concurrent GPU leases, with the run artifacts attached to the release audit.

@@ -14,7 +14,7 @@ Keywords: **must**, **must not**, **should**, **may**.
 | Property | Value |
 | --- | --- |
 | Endpoint | `wss://<host>:<port>/v1/device` |
-| Pairing endpoint | `wss://<host>:<port>/v1/pair` |
+| Pairing endpoint | `wss://<host>:<port>/v1/pair`, carrying `PairChallenge`, `PairRequest`, and `PairResult`, whose fields and proofs are normative in ADR-003 section 4 |
 | Subprotocol | `optimus.v1` |
 | TLS | 1.3 only, SPKI-pinned self-signed certificate |
 | Control frames | WebSocket text, UTF-8 JSON envelope (section 2) |
@@ -80,7 +80,18 @@ Direction key: `D2S` device to server, `S2D` server to device.
 
 ### 5.1 Session and connection
 
-#### `Hello` (D2S, first message)
+#### `Challenge` (S2D, first message on every connection)
+
+Core sends this immediately after the WebSocket opens, before the client sends anything. It carries the per-connection anti-replay binding that every signature covers (ADR-003 section 6).
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `serverChallenge` | string | base64url 32 CSPRNG bytes; single-use; bound to this connection |
+| `serverTimeUtc` | instant | Lets a client detect its own clock skew before signing |
+
+The challenge is consumed by the first `Hello`. A second `Hello` on the same connection is `4400`.
+
+#### `Hello` (D2S, first client message)
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -90,9 +101,13 @@ Direction key: `D2S` device to server, `S2D` server to device.
 | `platform` | enum | `Android` \| `WindowsShell` |
 | `resumeDeviceSessionId` | string? | For resume |
 | `lastServerSeq` | int? | For resume replay |
-| `auth` | object | ADR-003 section 5: `deviceId`, `timestampUtc`, `clientNonce`, `exporter`, `signature`; or `{ deviceId: "local-shell", localToken }` on loopback |
+| `attestationSupport` | enum | `DeviceSignature` \| `LocalVerification` \| `None`; what this device can produce for a `Consequential` approval. Core validates the claim at approval time and never trusts it alone |
+| `keyBacking` | enum? | Android only: `StrongBox` \| `Tee`; displayed in the PC device list |
+| `auth` | object | ADR-003 section 6: `deviceId`, `timestampUtc`, `clientNonce`, `serverChallenge` (echoed), `signature`; or `{ deviceId: "local-shell", localToken, serverChallenge }` on loopback |
 
-Errors: `4401` on invalid auth, `4403` revoked, `4406` major mismatch, `4400` malformed.
+`signature` is ECDSA P-256 with SHA-256, DER, base64url, over `canonical("optimus-hello-v1", deviceId, protocolMajor, timestampUtc, clientNonce, serverChallenge, spkiFingerprint)`.
+
+Errors: `4401` on invalid auth, a challenge that Core did not issue on this connection, or an already-consumed challenge; `4403` revoked; `4406` major mismatch; `4400` malformed.
 
 #### `Welcome` (S2D, response to `Hello`)
 
@@ -104,7 +119,7 @@ Errors: `4401` on invalid auth, `4403` revoked, `4406` major mismatch, `4400` ma
 | `resumed` | bool | Whether replay follows |
 | `serverTimeUtc` | instant | |
 | `limits` | object | ADR-002 section 8 |
-| `serverAuth` | object | `serverNonce`, `signature` over `"optimus-welcome-v1" || deviceId || clientNonce || serverNonce || exporter` |
+| `serverAuth` | object | `serverNonce`, and `signature` (ECDSA P-256 with SHA-256, DER, base64url) over `canonical("optimus-welcome-v1", deviceId, clientNonce, serverNonce, serverChallenge)` |
 
 #### `DeviceSession` (S2D, in `Welcome` and on change)
 
@@ -121,7 +136,7 @@ The device's connection identity and current capabilities.
 | `establishedAtUtc` | instant | |
 | `resumeWindowMs` | int | 300000 |
 
-`capabilities` are computed by Core, not claimed by the device. `approveConsequential` is present only when the device has a usable biometric or Windows Hello verifier, reported in `Hello.auth` and revalidated at approval time.
+`capabilities` are computed by Core, not claimed by the device. `approveConsequential` is present only when the device's `attestationSupport` is a kind the active `approvals.consequentialAttestationPolicy` accepts (ADR-005 section 8), and it is revalidated at approval time regardless of what this list said.
 
 #### `Ping` / `Pong` (both directions)
 
@@ -160,8 +175,8 @@ The device's connection identity and current capabilities.
 | `label` | string | User-visible, for example `claude-code · D:\repo\optimus` |
 | `workspacePath` | string? | Displayed truncated; never sent in `Error.message` |
 | `state` | enum | `Available` \| `Starting` \| `Unavailable` |
-| `unavailableReason` | string? | Coded string, not provider text |
-| `defaultSessionId` | string? | Most recent resumable session, informational only |
+| `unavailableReason` | enum? | `NotInstalled` \| `Starting` \| `AuthRequired` \| `Unreachable` \| `ProviderError`. A coded value, never provider text. `AuthRequired` means the user must authenticate in the provider's own tool; Optimus never collects the credential |
+| `resumableSessionId` | string? | Most recent resumable session on this destination, or null when the destination has never had one. Informational: the device must still send `ResumeSessionRequest` or `NewSession` to obtain a usable `sessionId` |
 
 `DestinationList.payload { destinations: Destination[], discoveredAtUtc }`. Sent on connect, after `DiscoverDestinations`, and on change.
 
@@ -183,7 +198,11 @@ The device's connection identity and current capabilities.
 | `sampleRateHz` | int | Must be 16000 |
 | `inputDeviceLabel` | string? | Diagnostics only |
 
-Response `CaptureStarted { streamId, maxUtteranceSeconds }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`.
+Response `CaptureStarted { streamId, maxUtteranceSeconds, minUtteranceMs }`, or `Error` with `SERVICE_BUSY_SETUP`, `ASR_UNAVAILABLE`, or `CAPTURE_ALREADY_ACTIVE`.
+
+Accepting `StartCapture` opens the GPU interactive window (ADR-004 section 4): Core preempts any speech or background GPU job and bars their admission until the draft is delivered or the utterance is aborted. This is why preemption cost never lands inside a measured latency gate.
+
+`minUtteranceMs` is 250. An utterance shorter than this is an accidental key tap: it produces no transcript and no draft (see `EndCapture`).
 
 #### `AudioFrame` (D2S, binary)
 
@@ -192,6 +211,8 @@ Section 4. Not a JSON message. Frames belong to the `streamId` returned by `Capt
 #### `EndCapture` (D2S)
 
 `{ streamId, reason }` where `reason` is `UserReleased` \| `UserCancelled` \| `MaxDurationReached`. `UserCancelled` discards everything and produces no draft.
+
+If the captured duration is below `minUtteranceMs` (250), Core answers `Error` with `UTTERANCE_TOO_SHORT`, discards the audio, produces no transcript and no draft, and closes the GPU interactive window. Devices render this as a return to `idle`, not as an error banner.
 
 #### `AudioAborted` (S2D)
 
@@ -236,7 +257,7 @@ A `PromptDraft` is **not** sendable. It carries no confirmation material.
 | --- | --- | --- |
 | `draftId` | string | |
 | `destinationId` | string | **Required.** Absent or null yields `DESTINATION_REQUIRED` |
-| `sessionId` | string? | Null requests a new session |
+| `sessionId` | string | **Required and non-null.** Must name an existing, non-`Closed` session on `destinationId`. Null or absent yields `SESSION_REQUIRED`; unknown, closed, or belonging to another destination yields `SESSION_NOT_FOUND`. Core never creates a provider session from this message (ADR-005 section 1) |
 | `intendedMode` | enum | `Send` \| `Queue` \| `Steer` |
 
 #### `ConfirmationRequest` (S2D)
@@ -247,7 +268,7 @@ Fields and MAC input are normative in ADR-005 section 2. Canonical label `optimu
 confirmationId, promptHash, destinationId, providerId, sessionId, intendedMode, deviceId, issuedAtUtc, expiresAtUtc, nonce
 ```
 
-The device **must** display `promptText`, `destinationLabel`, and the target session, and **must** echo `displayedText` byte-for-byte as rendered.
+The device **must** build one immutable confirmation view model from this message, render `promptText`, `destinationLabel`, and the session title from it, and echo `displayedText` from that same frozen value. No re-formatting, re-wrapping, or re-derivation may occur between rendering and echoing. What this check does and does not prove is stated in ADR-005 section 3.
 
 #### `SendAction` (D2S)
 
@@ -276,13 +297,26 @@ A failed send returns `Error` with a code from section 8 and `retryable: false`.
 
 `{ sessions: AgentSession[] }` per ADR-005 section 5, plus `queued: [{ sessionId, position, preview, queuedAtUtc }]` where `preview` is the first 80 characters of the confirmed text.
 
+Queues are in-memory only. After a Core restart, `queued` is always empty and the affected sessions carry `queueDroppedCount` (ADR-005 section 6). Neither `preview` nor queued prompt text is ever written to disk.
+
 #### `SessionUpdate` (S2D)
 
-`{ session, queued?, changeReason }`. Sent on every session state transition.
+| Field | Type | Notes |
+| --- | --- | --- |
+| `session` | `AgentSession` | |
+| `queued` | array? | Same shape as in `SessionList` |
+| `changeReason` | enum | `Created` \| `Resumed` \| `TurnStarted` \| `TurnCompleted` \| `QuestionRaised` \| `ApprovalRaised` \| `Cancelled` \| `Failed` \| `Closed` \| `QueueChanged` \| `QueueDropped` |
+| `duplicate` | bool | True when this reply was produced by envelope-id deduplication |
+| `coalesced` | bool | True when a `NewSession` was coalesced into an existing creation within 2 s (ADR-005 section 1) |
+| `queueDroppedCount` | int? | Present exactly once per session after a Core restart that discarded a queue |
+
+Sent on every session state transition.
 
 #### `NewSession` (D2S)
 
-`{ destinationId }`. The only action that discards a provider session context. Response `SessionUpdate`.
+`{ destinationId }`. The only action that creates a session, and the only action that discards an existing provider session context. Response `SessionUpdate` carrying the new `sessionId`.
+
+A device must call this (or `ResumeSessionRequest`) before it can request a confirmation, because `RequestConfirmation.sessionId` is required. Concurrency: repeats of the same envelope `id` return the original result with `duplicate: true`; different ids for the same `destinationId` within 2 s of a successful creation return that same session with `coalesced: true` (ADR-005 section 1).
 
 #### `ResumeSessionRequest` (D2S)
 
@@ -317,13 +351,27 @@ approvalId, sessionId, operationHash, riskLevel, issuedAtUtc, expiresAtUtc, nonc
 
 #### `ApprovalResponse` (D2S)
 
-Fields per ADR-005 section 8. Attestation label `optimus-approval-response-v1`, field order:
+Fields per ADR-005 section 8. Strict validation applies.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `approvalId` | string | |
+| `decision` | enum | `Approve` \| `Deny` |
+| `operationHash` | string | Echoed unmodified |
+| `mac` | string | Echoed unmodified |
+| `decidedAtUtc` | instant | |
+| `attestationKind` | enum | `DeviceSignature` \| `LocalVerification` \| `None` |
+| `attestation` | object? | Required when `riskLevel` is `Consequential`; shape depends on `attestationKind` |
+
+`attestationKind: "DeviceSignature"` carries `{ signature }`: ECDSA P-256 with SHA-256, DER, base64url, by the device's `approvalPublicKey`, over canonical label `optimus-approval-response-v1`, field order:
 
 ```
-approvalId, decision, operationHash, decidedAtUtc, exporter
+approvalId, decision, operationHash, decidedAtUtc, approvalNonce, serverChallenge
 ```
 
-Strict validation applies.
+`approvalNonce` is the `nonce` from the `ApprovalRequest`; `serverChallenge` is this connection's challenge. Together they prevent reuse on another approval or another connection.
+
+`attestationKind: "LocalVerification"` carries `{ approvalId, verifiedAtUtc, method: "WindowsHello" }` and **is not a signature**. It is an assertion by the desktop Shell that a Windows Hello verification succeeded, accepted only on a loopback connection, only for the named approval, only within 60 s, and only when the active policy permits it. Its trust boundary is stated in ADR-005 section 8 and `docs/security/THREAT_MODEL.md`.
 
 #### `ApprovalResolved` (S2D)
 
@@ -359,22 +407,37 @@ Audio arrives as binary frames on `streamId` in the server range. A device with 
 
 ## 6. Canonical sequences
 
+### 6.0 Connect
+
+```
+                                 S2D Challenge{serverChallenge}
+D2S Hello{auth{serverChallenge, signature}}
+                                 S2D Welcome{protocolVersion, deviceSession, serverAuth}
+                                 S2D ServiceStatus / DestinationList / SessionList
+```
+
 ### 6.1 Warm-path send
 
 ```
-D2S StartCapture                 S2D CaptureStarted{streamId}
+D2S StartCapture                 S2D CaptureStarted{streamId, minUtteranceMs:250}
+                                 (Core preempts TTS/background GPU work here)
 D2S AudioFrame x N (binary)
 D2S EndCapture{UserReleased}
                                  S2D Transcript{isFinal:true}
                                  S2D PromptDraft{draftId}
 D2S SetDestination               S2D ServiceStatus{activeDestinationId}
-D2S RequestConfirmation          S2D ConfirmationRequest{confirmationId, mac}
-D2S SendAction{confirmationId, displayedText, mac}
+D2S NewSession{destinationId}    S2D SessionUpdate{session{sessionId}, changeReason:"Created"}
+   (or ResumeSessionRequest{sessionId} when Destination.resumableSessionId is set)
+D2S RequestConfirmation{draftId, destinationId, sessionId, intendedMode:"Send"}
+                                 S2D ConfirmationRequest{confirmationId, mac}
+D2S SendAction{confirmationId, displayedText, sessionId, mac}
                                  S2D SendResult{accepted:true, sessionId}
                                  S2D SessionUpdate{state:Busy}
                                  S2D AgentEvent... / ApprovalRequest... / VoiceSummary...
                                  S2D SessionUpdate{state:Idle}
 ```
+
+`NewSession` appears once per destination, on first use or when the user deliberately starts fresh. Every later prompt to that destination reuses the returned `sessionId`.
 
 ### 6.2 Busy session
 
@@ -388,22 +451,27 @@ D2S SendAction{mode:"Queue"}     S2D SendResult{mode:"Queue", queuePosition:1}
 ### 6.3 Consequential approval from the phone
 
 ```
-                                 S2D ApprovalRequest{riskLevel:"Consequential", operationHash}
+                                 S2D ApprovalRequest{riskLevel:"Consequential", operationHash, nonce}
                                  S2D VoiceSummary{priority:"Interrupting"}
-(device performs biometric authentication and signs)
-D2S ApprovalResponse{decision:"Approve", attestation}
+(BiometricPrompt succeeds; the bound CryptoObject signs with optimus_approval_v1)
+D2S ApprovalResponse{decision:"Approve", attestationKind:"DeviceSignature", attestation{signature}}
                                  S2D ApprovalResolved{resolution:"Approved"} (broadcast)
 ```
+
+The desktop equivalent sends `attestationKind:"LocalVerification"`, which Core accepts only on loopback and only under the `AllowLocalVerification` policy; otherwise it answers `APPROVAL_ATTESTATION_NOT_PERMITTED` and the decision must be made on the phone.
 
 ### 6.4 Reconnect and resume
 
 ```
 (socket drops mid-capture)
-D2S Hello{resumeDeviceSessionId, lastServerSeq}
+                                 S2D Challenge{serverChallenge}     (new connection, new challenge)
+D2S Hello{resumeDeviceSessionId, lastServerSeq, auth{serverChallenge, signature}}
                                  S2D Welcome{resumed:true}
                                  S2D AudioAborted{code:"Reconnected"}
                                  S2D <replayed messages with seq > lastServerSeq>
 ```
+
+A `Hello` captured from the previous connection cannot be replayed here: it echoes a challenge that was consumed and will never be issued again.
 
 ## 7. Device-visible state machine
 
@@ -414,7 +482,7 @@ The desktop widget and the phone Talk screen render exactly these states, derive
 | `idle` | `Welcome`, `SessionUpdate{Idle}` | `CaptureStarted` |
 | `listening` | `CaptureStarted` | `EndCapture` or `AudioAborted` |
 | `transcribing` | `EndCapture` sent | `Transcript{isFinal}` |
-| `cleaning` | `Transcript{isFinal}` | `PromptDraft` |
+| `cleaning` | `Transcript{isFinal}` | `ConfirmationRequest`, `AudioAborted`, or `Error` |
 | `awaitingConfirmation` | `ConfirmationRequest` | `SendResult`, expiry, or `EditDraft` |
 | `sending` | `SendAction` sent | `SendResult` or `Error` |
 | `busy` | `SessionUpdate{Busy}` | `SessionUpdate{Idle}`, `Failed` |
@@ -422,7 +490,14 @@ The desktop widget and the phone Talk screen render exactly these states, derive
 | `completed` | `AgentEvent{Completed}` | any new action |
 | `error` | `Error`, `Bye`, socket loss | user dismissal or recovery |
 
-Devices **must not** invent transitions. In particular, a device **must not** move from `cleaning` to `sending` without an intervening `ConfirmationRequest` and an explicit user action.
+These are the ten states named in `PROJECT_PLAN.md`; this specification introduces no additional user-visible state.
+
+Two clarifications inside `cleaning`, which spans from the final transcript to the issued confirmation:
+
+- `PromptDraft` does not end `cleaning`; it changes what `cleaning` renders. The card shows the draft, the raw transcript, the destination picker, and the session picker, and the user acts there. Destination selection (`SetDestination`) and session resolution (`NewSession` or `ResumeSessionRequest`) both happen in this state, because `RequestConfirmation` requires a non-null `sessionId`.
+- An utterance below `minUtteranceMs` produces `Error{UTTERANCE_TOO_SHORT}` instead of a `Transcript`, so the device returns from `listening` straight to `idle` with no visible error.
+
+Devices **must not** invent transitions. In particular, a device **must not** move from `cleaning` to `sending` without an intervening `ConfirmationRequest` and an explicit user action, and **must not** reach `awaitingConfirmation` without a destination and a session the user chose.
 
 ## 8. Error code registry
 
@@ -451,6 +526,8 @@ Codes are stable within major version 1.
 | `TTS_UNAVAILABLE` | TTS runner failed | yes |
 | `SERVICE_BUSY_SETUP` | Core is in `SetupExclusive` | yes |
 | `UTTERANCE_TOO_LONG` | Exceeded `maxUtteranceSeconds` | no |
+| `UTTERANCE_TOO_SHORT` | Below `minUtteranceMs` (250); treated as an accidental tap, no draft produced | no |
+| `GPU_SLOT_STUCK` | A GPU job could not be evicted and the slot could not be granted without overlap (ADR-004 section 4) | yes |
 
 ### Destination and session
 
@@ -458,7 +535,9 @@ Codes are stable within major version 1.
 | --- | --- | --- |
 | `DESTINATION_REQUIRED` | No explicit destination selected | no |
 | `DESTINATION_UNAVAILABLE` | Destination not reachable | yes |
-| `SESSION_NOT_FOUND` | Unknown or unresumable session | no |
+| `SESSION_REQUIRED` | `RequestConfirmation` arrived without a `sessionId`; send `NewSession` or `ResumeSessionRequest` first | no |
+| `SESSION_NOT_FOUND` | Unknown, closed, unresumable, or belonging to a different destination | no |
+| `PROVIDER_AUTH_REQUIRED` | The provider CLI is not authenticated. The user must authenticate in the provider's own tool; Optimus never collects provider credentials | no |
 | `SESSION_BUSY` | Turn in progress; see `details.allowedActions` | no |
 | `QUEUE_FULL` | Queue depth limit reached | no |
 | `STEER_IN_FLIGHT` | A steer is already pending | no |
@@ -488,8 +567,9 @@ All confirmation codes are `retryable: false`.
 | `APPROVAL_INVALID` | MAC mismatch |
 | `APPROVAL_CONTENT_MISMATCH` | Echoed `operationHash` differs |
 | `APPROVAL_OPERATION_CHANGED` | Provider operation no longer matches |
-| `APPROVAL_ATTESTATION_REQUIRED` | `Consequential` without attestation |
-| `APPROVAL_ATTESTATION_INVALID` | Signature, binding, or freshness failed |
+| `APPROVAL_ATTESTATION_REQUIRED` | `Consequential` with `attestationKind: None` |
+| `APPROVAL_ATTESTATION_NOT_PERMITTED` | The offered `attestationKind` is not accepted by the active policy, for example `LocalVerification` under `RequireDeviceSignature` |
+| `APPROVAL_ATTESTATION_INVALID` | Signature, binding, freshness, transport, or single-use check failed |
 
 All approval codes are `retryable: false`.
 
@@ -502,9 +582,10 @@ T003 delivers `tests/protocol-vectors/` with these directories, consumed by both
 | `canonical/` | Canonical-encoding inputs and expected bytes, including NFC normalization and null handling |
 | `envelope/` | Valid and invalid envelopes, including strict-payload rejections |
 | `audio/` | Binary header encode and decode cases, gaps, reserved-bit violations |
-| `negotiation/` | Version negotiation and resume cases |
-| `confirmation/` | MAC vectors for `optimus-confirm-v1` with a fixed test key |
-| `approval/` | MAC and attestation vectors for `optimus-approval-v1` and `optimus-approval-response-v1` |
+| `negotiation/` | `Challenge`, version negotiation, `Hello` signature, challenge reuse, and resume cases |
+| `signatures/` | ECDSA P-256 with SHA-256 vectors for `optimus-hello-v1`, `optimus-welcome-v1`, `optimus-pair-v1`, and `optimus-pair-result-v1`, with fixed test key pairs, plus negative cases for non-canonical DER and high-S signatures |
+| `confirmation/` | MAC vectors for `optimus-confirm-v1` with a fixed test key, including the non-null `sessionId` requirement |
+| `approval/` | MAC vectors for `optimus-approval-v1`, signature vectors for `optimus-approval-response-v1`, and `LocalVerification` payload validation cases |
 | `errors/` | One example per registry code |
 
 A change to any vector file is a protocol change and requires an ADR amendment.
