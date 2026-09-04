@@ -1,60 +1,34 @@
-# Multi-Model Delivery Workflow
+# Fast multi-model workflow
 
-## Control checkout
+The user controls the Claude, Antigravity/Gemini, and Codex sessions. Sol reviews only.
 
-Keep the primary checkout on `main` as the control and integration directory. Product implementation occurs in task-specific sibling worktrees.
+## Starting work
 
-## Create a task worktree
+Use the next slice from `docs/BACKLOG.md`. Give the implementer:
 
-After the task contract is `READY` and its dependencies are on `main`:
+- the goal and done conditions;
+- the exact repository/worktree;
+- an instruction to build and run;
+- an instruction not to add protocols, security layers, fallback engines, generalized frameworks, or unrelated hardening.
 
-```powershell
-git worktree add ..\Optimus_T002 -b optimus/T002-scaffold main
-```
+Ask Opus only a narrow question when a concrete difficult blocker exists. Do not ask Opus to design the whole product before Gemini can code.
 
-Open only that sibling directory in the assigned coding tool. Do not open the same worktree in another agent until the active agent has stopped and committed.
+## Implementation
 
-## Implementation handoff
+Gemini makes the smallest complete change, runs targeted tests/builds, and explains exactly how the user can try it. Worktrees are useful for isolating code, but documentation gates and multi-round design reviews are not required.
 
-The implementer must:
+## Review
 
-1. Read `AGENTS.md`, `PROJECT_PLAN.md`, the task contract, and referenced ADRs.
-2. Confirm the base commit and task-owned files.
-3. Implement only the contract.
-4. Add and run the required tests.
-5. Record evidence in the task file.
-6. Review `git diff` and `git status` for unrelated changes.
-7. Commit and set the task status to `IMPLEMENTED`.
+Sol asks:
 
-## Review handoff
+- Can it send without confirmation?
+- Can it send to the wrong destination?
+- Can cleanup change intent?
+- Is ordinary PC or phone use broken?
+- Does the promised runnable path actually work?
 
-After implementation stops, open the same worktree in Codex using GPT-5.6 Sol. The reviewer compares the task branch against its declared base, runs checks, and creates `reviews/T###-sol.md` from the review template.
+If none apply, pass and move on. Future hardening and hypothetical release risks do not block this personal tool.
 
-If the verdict is `CHANGES_REQUIRED`, close the reviewer before opening the worktree in the assigned fixer. After corrections are committed, Sol appends a new review round and reissues the verdict.
+## Current direction
 
-## Integration
-
-Opus verifies that the newest review covers the current branch head and says `PASS`. Integration uses a non-fast-forward merge so the task boundary remains visible:
-
-```powershell
-git switch main
-git merge --no-ff optimus/T002-scaffold
-```
-
-Run the accumulated milestone checks, then remove the completed worktree:
-
-```powershell
-git worktree remove ..\Optimus_T002
-git branch -d optimus/T002-scaffold
-```
-
-Do not remove a worktree with uncommitted changes. Do not force-delete a branch that has not been integrated.
-
-## Parallel work
-
-Parallel tasks are permitted only when Opus records that:
-
-- Both tasks depend on commits already present on `main`.
-- Their owned files and interfaces do not overlap.
-- Neither task consumes an interface that the other is still defining.
-- Each task uses a different worktree.
+The T003 protocol/crypto branch is parked and must not be merged into the MVP. Start with S000 cleanup, then build the Windows path and the minimal Pixel 9a path.

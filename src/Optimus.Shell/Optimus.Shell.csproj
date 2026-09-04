@@ -6,6 +6,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Optimus.Contracts\Optimus.Contracts.csproj" />
-    <ProjectReference Include="..\Optimus.Client\Optimus.Client.csproj" />
   </ItemGroup>
 </Project>

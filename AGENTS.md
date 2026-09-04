@@ -1,76 +1,65 @@
-# Optimus Voice OS Agent Rules
+# Optimus Voice OS — Agent rules
 
-These instructions apply to every coding agent working in this repository.
+## Authority
 
-## Canonical sources
+The user's latest instruction and `PROJECT_PLAN.md` are authoritative. The original ADRs, protocol specifications, threat model, and T003–T029 release backlog are obsolete for the personal-use MVP.
 
-Read `PROJECT_PLAN.md`, this file, the assigned task contract, and all architecture decisions referenced by the task before changing anything. In a conflict, the newest accepted architecture decision wins over the project plan; the task contract may narrow scope but may not weaken a project invariant.
+Goal: ship a working Windows + Pixel 9a vertical slice quickly.
 
-## Model roles
+## Roles
 
-### Claude Opus 5 — technical lead
+### Claude Opus 5
 
-Owns architecture, protocols, security, privacy, concurrency, lifecycle design, latency-critical decisions, model-selection rules, difficult debugging, and final integration. Opus writes decision-complete task contracts before implementation begins.
+Use for hard architecture or debugging that blocks current implementation. Do not create long contracts, generalized protocols, speculative security systems, or future-proof frameworks.
 
-Opus handles any change that:
+### Gemini 3.8 Flash
 
-- Changes an accepted architecture decision or public protocol.
-- Touches three or more subsystems.
-- Affects confirmation integrity, credentials, pairing, approvals, privacy, or deletion.
-- Alters concurrency, process ownership, GPU scheduling, or recovery semantics.
-- Follows two unsuccessful Gemini repair attempts.
+Own routine implementation, cleanup, UI, model integration, sender adapters, phone transport, tests, and builds. Implement the smallest complete slice and leave it runnable.
 
-### Gemini 3.8 Flash — workhorse implementer
+### GPT-5.6 Sol
 
-Owns bounded implementation tasks: scaffolding, routine production code, UI components, provider wrappers, model runners, tests, fixtures, benchmarks, build scripts, documentation, and packaging.
+Review completed working slices only. Report blocker-level defects and failed done conditions. Do not implement product code, expand scope, or start repeated rounds over optional hardening.
 
-Gemini must not change architecture decisions, expand task scope, silently add dependencies, or edit files outside the task's ownership. If the contract is insufficient or contradictory, stop and report the exact ambiguity to Opus.
+## Workflow
 
-### GPT-5.6 Sol — independent reviewer
+1. The user starts Claude or Gemini.
+2. Give it one slice from `docs/BACKLOG.md`.
+3. It implements, runs, and records concise evidence.
+4. Sol reviews once for blockers.
+5. Fix blockers; otherwise move forward and dogfood.
 
-Reviews every completed merge unit against its contract and accepted architecture. Sol independently runs relevant checks and writes a report under `reviews/`. Sol does not implement feature code or approve its own changes.
+Do not require an ADR, decision-complete contract, protocol review, or security review before routine feature work.
 
-Sol returns exactly one verdict:
+## Non-negotiable behavior
 
-- `PASS` — all required evidence exists and no blocking finding remains.
-- `CHANGES_REQUIRED` — one or more findings must be addressed.
+- Always show the exact destination before sending.
+- Never guess or silently substitute a destination.
+- Always require explicit confirmation.
+- Cleanup must not change intent.
+- Keep routine audio local and ephemeral.
+- Do not store provider credentials.
+- Do not expose the PC endpoint directly to the public internet.
 
-## Mandatory workflow
+## Deliberate simplifications
 
-1. Opus creates or approves a task contract with status `READY`.
-2. One implementation agent works in the task's isolated worktree.
-3. The implementer records evidence, commits, and marks the task `IMPLEMENTED`.
-4. Sol reviews the full diff and writes a review report.
-5. Routine findings return to Gemini. Architecture, security, concurrency, privacy, protocol, or latency-critical findings go to Opus.
-6. Sol re-reviews all corrections.
-7. Opus integrates only after the latest report says `PASS`.
+Do not add these during the MVP:
 
-Never run two agents concurrently in the same worktree. Parallel tasks require separate worktrees, non-overlapping file ownership, and no unresolved dependency between them.
+- release-grade pairing, cryptography, attestation, replay protection, certificate management, or key storage;
+- public/versioned wire protocols or cross-platform conformance vectors;
+- compatibility fallback engines or automatic provider/model switching;
+- durable queues, distributed sessions, approval systems, or complex recovery;
+- exhaustive error taxonomies and catch/retry layers;
+- generalized GPU scheduling and process supervision;
+- release audits, telemetry, hosted services, or enterprise abstractions.
 
-## Review severities
-
-- `P0`: confirmation bypass, credential exposure, arbitrary execution, privacy violation, destructive behavior, or data loss. Blocks all integration.
-- `P1`: functional defect, race, protocol incompatibility, session corruption, or missed mandatory performance target. Blocks the task.
-- `P2`: missing recovery, inadequate testing, maintainability problem, or accessibility defect. Blocks the milestone.
-- `P3`: optional polish. Record in the backlog; does not block release.
-
-## Product invariants
-
-- Never send a prompt without a visible explicit destination and user confirmation.
-- Never infer or silently change the destination.
-- Cleanup may repair presentation but may not add, remove, or reinterpret intent.
-- Ordinary voice processing and audio remain local.
-- Routine audio is not retained.
-- Agent cloud behavior remains unchanged and is isolated behind sender adapters.
-- Approval requests are authenticated, expiring, replay-protected, and bound to the displayed operation.
-- The phone is a capture, status, and approval client; the PC is the only inference and agent server.
-- Speed is the principal optimization goal only after correctness, confirmation, security, and privacy gates pass.
+Use private LAN/Tailscale, a manually configured PC address, a tiny direct message set, and simple reconnect behavior for the one phone.
 
 ## Change discipline
 
-- Preserve unrelated user changes.
-- Keep commits limited to one task.
-- Add tests with behavior changes.
-- Record commands and results in the task evidence section.
-- Do not commit secrets, model weights, generated audio, benchmark outputs, or machine-local settings.
-- Do not declare success when required checks were skipped or failed.
+- Preserve unrelated user work.
+- Remove obsolete infrastructure instead of wrapping it in another abstraction.
+- Keep each slice runnable.
+- Test changed behavior and normal failures, not hypothetical product-scale scenarios.
+- Log failures plainly and leave the UI usable.
+- Do not commit secrets, models, recordings, or machine-local configuration.
+- Optimize measured latency in the real user path.

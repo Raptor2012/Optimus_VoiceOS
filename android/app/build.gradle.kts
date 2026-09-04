@@ -32,9 +32,7 @@ android {
 }
 
 dependencies {
-    implementation(project(":feature:pairing"))
     implementation(project(":feature:talk"))
-    implementation(project(":feature:sessions"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

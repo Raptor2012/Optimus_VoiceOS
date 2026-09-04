@@ -1,136 +1,212 @@
-# Optimus Voice OS — Canonical Project Plan
+# Optimus Voice OS — Personal-use implementation plan
 
-## Vision
+## Goal
 
-Build the fastest local-first voice layer between a human and coding agents. The experience is deliberate: talk, inspect a cleaned draft, select an explicit destination, confirm, and receive concise event-driven voice feedback.
+Build the fastest practical voice layer for one user, one Windows 11 PC, and one Pixel 9a.
 
-## Supported environment
+The working flow is:
 
-- Windows 11 desktop with Intel Core i9-14900HX, 32 GB RAM, and RTX 4070 Laptop GPU with 8 GB VRAM.
-- Pixel 9a running Android API 35.
-- Claude Code and Codex as initial coding-agent destinations.
-- LAN and direct Tailscale connectivity without a hosted relay.
-- English recognition for v1.
+1. Hold push-to-talk on the PC or phone.
+2. Speak.
+3. Transcribe on the PC with fast local STT.
+4. Clean the text with a small local LLM.
+5. Show the exact draft and an explicitly selected destination.
+6. Send only after the user confirms.
+7. Show short event-driven status and completion feedback.
 
-## User experience
+This is personal software, not a commercial product. The priority is a useful end-to-end build, not production-grade protocols, generalized infrastructure, exhaustive edge cases, or release certification.
 
-### Desktop
+## Target setup
 
-- Global hold-to-talk hotkey.
-- Tiny frameless floating widget showing transcript snippet, destination card, state, and contextual controls.
-- States: idle, listening, transcribing, cleaning, awaiting confirmation, sending, busy, approval, completed, and error.
-- Tray settings for hotkeys, glossary, destinations, models, privacy, devices, voice, benchmarks, and diagnostics.
+- Windows 11 PC: Intel Core i9-14900HX, 32 GB RAM, RTX 4070 Laptop GPU with 8 GB VRAM.
+- Pixel 9a running Android.
+- One user, one PC, one phone.
+- Claude, Antigravity, and Codex Windows applications as initial destinations.
+- English speech first.
+- Private LAN or Tailscale only. Never expose the PC service through public port forwarding.
 
-### Phone
+## Core experience
 
-- Native Kotlin/Jetpack Compose application targeting Android API 35.
-- Tap-to-start and tap-to-stop recording.
-- Talk screen mirrors transcript, cleaned draft, destination, and confirmation.
-- Sessions screen exposes active agent sessions, approvals, Queue, Steer, Cancel, and New Session.
-- Background approval notifications require biometric confirmation for consequential actions.
-- Voice plays on the device that originated the prompt.
+### Windows widget
+
+Use one tiny always-on-top widget with these states:
+
+- `Idle`
+- `Listening`
+- `Processing`
+- `Confirm`
+- `Sending`
+- `Sent`
+- `Error`
+
+It shows:
+
+- transcript or cleaned draft;
+- explicit destination card;
+- edit, confirm, and cancel controls;
+- one short status line.
+
+### Pixel 9a app
+
+Build a small native Kotlin/Jetpack Compose app that mirrors the useful parts of the widget:
+
+- push-to-talk;
+- transcript and cleaned draft;
+- explicit destination selection;
+- edit, confirm, and cancel;
+- current agent status;
+- short final summary.
+
+The phone captures audio; the PC performs STT, cleanup, and agent sending. The phone is a remote control for the user's PC, not an independent inference server.
+
+### Destination and confirmation
+
+- The user manually configures each destination by selecting an open Windows application window and assigning a label.
+- The selected destination is visible before every send.
+- The app never guesses, substitutes, or silently changes a destination.
+- PC confirmation is a local in-memory UI action.
+- Phone confirmation is a simple message to the PC over the existing private connection.
+- The PC sends the exact confirmed draft snapshot.
+- No cryptographic receipt, MAC, attestation, replay ledger, or approval-signing system is needed for this personal-use MVP.
 
 ### Agent feedback
 
-- Speak meaningful transitions: planning begins, tests pass or fail, approval is needed, the agent asks a question, work fails, and final completion summary.
-- Repeated planning and ordinary file edits remain silent and use visual state only.
-- Coalesce repeated events and rate-limit spoken summaries.
+Start with visual event updates and a final text summary. After the core flow works, add concise local voice phrases for meaningful transitions such as tests failed, agent question, and work completed. Do not narrate ordinary file edits.
 
-## Technical architecture
+Custom voice design and sophisticated streaming TTS are optional later work, not prerequisites for a testable build.
 
-- .NET 8 WPF desktop application and tray process.
-- ASP.NET Core/Kestrel local service.
-- Isolated local inference runners with explicit health, warmup, cancellation, and crash-recovery contracts.
-- Kotlin/Jetpack Compose Android application.
-- One pinned-TLS WebSocket connection using structured control messages and binary PCM audio frames.
-- QR pairing with PC identity, certificate fingerprint, endpoint, and one-time secret.
-- Credentials stored through Windows DPAPI and Android Keystore.
-- Modular Claude Code and Codex sender adapters behind one provider-neutral contract.
+## Lean architecture
 
-## Local inference
+Prefer the smallest implementation that works on the target devices.
 
-### Speech recognition
+### PC
 
-Benchmark:
+Use the existing .NET 8/WPF scaffold. Keep the MVP in one desktop process unless a measured runtime problem forces a boundary.
 
-1. NVIDIA Parakeet Unified English 0.6B.
-2. Qwen3-ASR 0.6B.
-3. Faster-Whisper Distil-Large-v3 as compatibility fallback.
+Required pieces:
 
-The winner is the lowest-latency candidate that passes every gate. Within a 10% latency tie, prefer critical-token accuracy; if still tied, select Parakeet Unified for the simpler English streaming path.
+- global hotkey;
+- in-memory WASAPI capture;
+- one local STT integration;
+- one local cleanup integration;
+- floating WPF widget;
+- local destination configuration;
+- one small Windows sender adapter per target application;
+- a minimal HTTP/WebSocket endpoint for the Pixel app;
+- simple timing logs around the real path.
 
-### Prompt cleanup
+A sender adapter needs only:
 
-Benchmark Gemma 4 E2B Q4, Gemma 3 1B, and Qwen3.5 0.8B. Ship the fastest model producing zero intent changes across the golden suite. Gemma 4 wins an otherwise equal result.
+- `IsAvailable`
+- `ActivateConfiguredDestination`
+- `InsertText`
+- `Submit`
 
-Cleanup may remove fillers and abandoned repetition, repair punctuation/casing, format identifiers, and apply acoustically grounded glossary corrections. It may not invent requirements, choose destinations, or reinterpret the request.
+Adapters may use Windows UI Automation, a configured window identity, and clipboard insertion where needed. If the configured window is missing or ambiguous, fail visibly. Never choose a substitute.
 
-### Voice
+### Phone connection
 
-- Create an original deep, calm, authoritative identity with Qwen3-TTS 1.7B VoiceDesign during setup.
-- Prohibit imitation of identifiable people, actors, and characters.
-- Benchmark Qwen3-TTS 0.6B against Pocket TTS using the selected synthetic reference.
-- Prefer the fastest passing runtime; within a 30 ms tie, choose Pocket TTS to preserve GPU capacity.
-- Pre-render common phrases with the selected voice.
-- Keep Kokoro only as an emergency fallback.
+Use one small, app-private JSON message set and binary/audio frames. Implement only messages used by the current UI, for example:
 
-## Agent behavior
-
-- Discover destinations explicitly and display the active choice.
-- Preserve provider sessions until the user chooses New Session.
-- Require explicit Queue or Steer when an agent is busy.
-- Show and speak agent questions and approval requests.
-- Reject stale, modified, expired, replayed, or destination-mismatched confirmation actions.
-
-The provider-neutral adapter exposes:
-
-- `DiscoverDestinations`
-- `CreateSession`
-- `ResumeSession`
-- `SendConfirmedPrompt`
-- `QueuePrompt`
-- `SteerActiveSession`
-- `RespondToApproval`
+- `StartCapture`
+- audio chunks
+- `EndCapture`
+- `DraftUpdated`
+- `SelectDestination`
+- `ConfirmSend`
 - `Cancel`
-- `SubscribeToEvents`
+- `StatusUpdated`
 
-The desktop/mobile protocol includes:
+Do not build a general public protocol or compatibility layer. There is one current PC build and one current phone build; update them together.
 
-- `DeviceSession`
-- `Destination`
-- `AudioFrame`
-- `PromptDraft`
-- `ConfirmationRequest`
-- `SendAction`
-- `AgentEvent`
-- `ApprovalRequest`
-- `VoiceSummary`
+For development:
 
-## Privacy and storage
+- prefer Tailscale IP or a manually configured private LAN IP;
+- use a manually entered PC address;
+- keep connection state in memory;
+- reconnect simply after disconnection;
+- show connection failure plainly.
 
-- Do not retain routine audio.
-- Store local text event history with configurable retention and clear-history control.
-- Allow an explicit opt-in calibration set of 30–50 local recordings, independently deletable.
-- Bind the PC service only to configured trusted interfaces and reject unpaired clients.
-- Do not require a hosted account, relay, or telemetry service.
+No QR pairing, TLS pinning, custom certificates, device identity, challenge/response, signature verification, attestation, key stores, lockout system, protocol negotiation, resumption protocol, durable delivery, or cross-platform conformance-vector suite. These are deferred unless actual use later proves they are worth adding.
 
-## Performance and acceptance gates
+## Initial local models
 
-- Hotkey press to active capture below 50 ms p95.
-- Hotkey release to final raw transcript below 250 ms p95 for utterances up to 20 seconds.
-- Hotkey release to cleaned visible draft below 500 ms p95.
-- Critical filename, symbol, number, flag, and coding-term accuracy at least 97%.
-- Normalized WER at most 8% on the project coding corpus.
-- Zero intent-changing transcription or cleanup failures in the golden suite.
-- TTS first audible chunk below 200 ms p95 and real-time factor no greater than 0.5.
-- No release without end-to-end success on the target Windows computer and Pixel 9a over LAN and Tailscale.
+Do not build a multi-engine model platform before the application works.
 
-## Delivery milestones
+- STT: integrate one Parakeet 0.6B English model first and measure it on the RTX 4070.
+- Cleanup: integrate one quantized Qwen3.5 0.8B instruct model first with a strict cleanup prompt.
+- If a model fails to load or run, show an error. Do not silently switch to another engine.
+- After the full PC and phone flows work, compare at most one serious alternative per stage on 20–30 real coding utterances. Replace the initial choice only if measured results are materially better.
 
-1. Architecture, protocols, threat model, latency budget, and repository scaffold.
-2. Desktop widget, hotkey, audio capture, state machine, and local diagnostics.
-3. STT, cleanup, glossary, model management, and benchmark selection.
-4. Original voice creation, runtime TTS, and event-summary engine.
-5. Claude Code and Codex adapters with sessions, Queue, Steer, questions, and approvals.
-6. Secure PC service, pairing, and complete Pixel 9a application.
-7. Installer, model distribution, failure recovery, performance hardening, and release audit.
+Cleanup may remove fillers, repair punctuation/casing, format dictated identifiers, and apply a small personal glossary. It may not invent requirements, select a destination, or reinterpret intent. The user sees and can edit every result before confirmation.
+
+## Error handling appropriate for this app
+
+Handle only failures likely in normal personal use:
+
+- microphone unavailable;
+- hotkey registration failed;
+- STT or cleanup failed to load/run;
+- phone disconnected;
+- configured destination window unavailable or ambiguous;
+- insert/submit failed;
+- user cancelled.
+
+Show a plain-language error, leave the UI usable, and log timestamp, component, duration, and a short technical message. Do not create an exhaustive public error-code registry, multi-stage retry policy, durable queue, recovery state machine, or compatibility fallback system.
+
+## Privacy and accepted development risk
+
+- Keep routine audio in memory and discard it after transcription.
+- Do not add telemetry, hosted relays, or provider credential storage.
+- Operate the user's already-authenticated Windows apps.
+- Store only local configuration and optional diagnostic logs.
+- Trust the user's private LAN/Tailscale environment during MVP development.
+- Security hardening is deliberately deferred. This MVP must not be exposed directly to the public internet.
+
+## Remove or park this unnecessary infrastructure
+
+The original release-oriented architecture is no longer active. Claude and Gemini should remove it from the implementation path and delete unused scaffold/code where safe:
+
+- the T003 cross-platform protocol/crypto implementation;
+- canonical encoders and hundreds of conformance vectors;
+- public message catalogues and error registries;
+- QR pairing and certificate plans;
+- device identity, signatures, attestation, replay protection, and key-store abstractions;
+- version negotiation and compatibility fallbacks;
+- durable queues, distributed sessions, approval signing, and crash-resume protocols;
+- generalized GPU lease scheduling and preemption proofs;
+- large threat-model, latency-budget, benchmark, and release-audit machinery;
+- unused projects, packages, interfaces, tests, and documents created only for those systems.
+
+Do not merge the existing T003 branch into the MVP. Git history is sufficient if any of it is wanted later.
+
+Keep only code that supports the current PC/phone vertical slice. Do not rewrite old infrastructure into a smaller framework; delete or exclude it.
+
+## First useful-build acceptance
+
+The user can complete ten consecutive prompts from Windows and ten from the Pixel 9a through:
+
+`push-to-talk -> speech -> local transcript -> cleaned draft -> explicit destination -> confirmation -> send`
+
+The MVP is useful when:
+
+- no prompt is sent without confirmation;
+- the destination never changes implicitly;
+- cleanup does not change intent in the dogfood set;
+- Claude, Antigravity, and Codex can each receive confirmed text;
+- phone disconnects and ordinary component failures return to a usable state;
+- stage timings identify real latency bottlenecks.
+
+These are dogfood checks, not release certification.
+
+## Delivery order
+
+1. Remove/exclude obsolete release-grade protocol and security infrastructure.
+2. Windows widget, hotkey, and in-memory microphone capture.
+3. Local STT and cleanup visible in the widget.
+4. Claude sender adapter, then Antigravity and Codex.
+5. Minimal PC endpoint and Pixel 9a push-to-talk/confirmation UI.
+6. Full PC and phone dogfood pass with measured latency fixes.
+7. Optional event summaries/TTS and installation polish.
+
+Executable slices are in `docs/BACKLOG.md`.
