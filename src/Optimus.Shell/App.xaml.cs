@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using Optimus.Core.Audio;
 using Optimus.Core.Hotkeys;
+using Optimus.Core.Phone;
 using Optimus.Inference;
 using Optimus.Providers;
 using Optimus.Shell.ViewModels;
@@ -22,6 +23,8 @@ public partial class App : Application
     private WidgetViewModel? _viewModel;
     private VoicePipeline? _pipeline;
     private DestinationRegistry? _destinations;
+    private PhoneEndpoint? _phoneEndpoint;
+    private PhoneSession? _phoneSession;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -79,6 +82,31 @@ public partial class App : Application
             });
         }
 
+        // The phone endpoint. --no-phone skips it; it binds a LAN/Tailscale-reachable port and
+        // has no authentication, so it must only ever run on a private network.
+        if (!e.Args.Contains("--no-phone"))
+        {
+            WidgetViewModel viewModel = _viewModel;
+            _phoneEndpoint = new PhoneEndpoint();
+            _phoneSession = new PhoneSession(
+                _phoneEndpoint,
+                _pipeline,
+                onDraft: (raw, clean, timings) => Dispatcher.Invoke(() =>
+                    viewModel.LoadPhoneDraft(raw, clean, timings)),
+                onStatus: line => Dispatcher.Invoke(() => viewModel.PhoneStatus = line));
+
+            try
+            {
+                _phoneEndpoint.Start();
+                _viewModel.PhoneStatus =
+                    $"Phone endpoint on port {_phoneEndpoint.Port} — {string.Join(", ", PhoneEndpoint.LocalAddresses())}";
+            }
+            catch (Exception ex)
+            {
+                _viewModel.PhoneStatus = $"Phone endpoint failed: {ex.Message}";
+            }
+        }
+
         if (manualDraft != null)
         {
             _viewModel.LoadManualDraft(manualDraft);
@@ -115,6 +143,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _phoneSession?.Dispose();
+        _phoneEndpoint?.Dispose();
         _viewModel?.Dispose();
         _pipeline?.Dispose();
         _controller?.Dispose();

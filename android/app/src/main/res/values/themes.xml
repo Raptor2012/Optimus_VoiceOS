@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      No ActionBar: the app is a single Compose screen and the default bar was drawing over
+      the address field. Day/night pairs with values-night.
+    -->
+    <style name="Theme.OptimusVoiceOS" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

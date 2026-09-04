@@ -92,6 +92,15 @@ Add one direct PC endpoint for the Pixel app over private LAN/Tailscale. Use a t
 
 Done when the Pixel can connect using a manually configured PC address, start/stop capture, receive draft/status updates, and disconnect/reconnect.
 
+Status: done, verified on the real Pixel 9a. One TCP endpoint on port 8770 with a 5-byte frame
+header (kind + big-endian length); JSON control messages and binary PCM over the same socket.
+Full run on device: connect, capture, stop, draft returned, disconnect, reconnect. A live
+utterance produced `audio 11.5s / STT 927 ms / cleanup 1473 ms / total 2401 ms`.
+
+The endpoint binds 0.0.0.0 and has no authentication, per this slice. Windows Firewall blocks
+inbound 8770 by default, so on-device testing used `adb reverse`; direct LAN or Tailscale use
+needs an inbound rule the user adds themselves.
+
 Explicitly forbidden in this slice:
 
 - QR pairing;

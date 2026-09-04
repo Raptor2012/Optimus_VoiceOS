@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="512" height="512" role="img" aria-label="Optimus Voice OS logo">
+  <title>Optimus Voice OS</title>
+  <!--
+    Original heroic-robot faceplate: helmet, side antennae, centre crest, visor and vent guard.
+    An original geometric design in that visual register, not a likeness of any existing character.
+    Source of truth for app/src/main/res/drawable/ic_optimus_foreground.xml — keep the two in step.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B2436"/>
+      <stop offset="1" stop-color="#0C1018"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="108" height="108" rx="24" fill="url(#bg)"/>
+
+  <g transform="translate(54 54) scale(0.86) translate(-54 -54)">
+    <path d="M30,38 L20,25 L25.5,20.5 L35.5,33 Z" fill="#9FB4CC"/>
+    <path d="M78,38 L88,25 L82.5,20.5 L72.5,33 Z" fill="#9FB4CC"/>
+
+    <path d="M30,46 C30,33 40.5,23 54,23 C67.5,23 78,33 78,46 L78,75 C78,80 74.5,83 70,83 L38,83 C33.5,83 30,80 30,75 Z" fill="#1E5BC6"/>
+    <path d="M54,23 C67.5,23 78,33 78,46 L78,75 C78,80 74.5,83 70,83 L54,83 Z" fill="#1748A0"/>
+
+    <path d="M48.5,23.6 C50.3,23.2 52.1,23 54,23 C55.9,23 57.7,23.2 59.5,23.6 L59.5,45 L48.5,45 Z" fill="#D93A2B"/>
+
+    <path d="M32,47 L76,47 L76,52 L32,52 Z" fill="#0F3576"/>
+
+    <path d="M36,55 L49,55 L49,63 L36,63 Z" fill="#7FD4FF"/>
+    <path d="M59,55 L72,55 L72,63 L59,63 Z" fill="#7FD4FF"/>
+
+    <path d="M37,68 L71,68 L71,80 C71,81.7 69.7,83 68,83 L40,83 C38.3,83 37,81.7 37,80 Z" fill="#C6D2DC"/>
+    <path d="M43,71 L45.5,71 L45.5,80 L43,80 Z M52.8,71 L55.3,71 L55.3,80 L52.8,80 Z M62.6,71 L65.1,71 L65.1,80 L62.6,80 Z" fill="#7A8A99"/>
+  </g>
+</svg>

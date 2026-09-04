@@ -33,6 +33,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private WindowCandidate? _selectedWindowChoice;
     private bool _isDraftEditable = true;
     private string _lastSentText = string.Empty;
+    private string _phoneStatus = string.Empty;
 
     public WidgetState State
     {
@@ -202,6 +203,23 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    /// <summary>Phone endpoint state, shown so the user knows what address to dial.</summary>
+    public string PhoneStatus
+    {
+        get => _phoneStatus;
+        set
+        {
+            if (_phoneStatus != value)
+            {
+                _phoneStatus = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasPhoneStatus));
+            }
+        }
+    }
+
+    public bool HasPhoneStatus => !string.IsNullOrWhiteSpace(PhoneStatus);
+
     public string DestinationName
     {
         get => _destinationName;
@@ -343,6 +361,22 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = true;
         State = WidgetState.Confirm;
         StatusLine = "Manual draft loaded — choose a destination, review, then confirm";
+    }
+
+    /// <summary>
+    /// Shows a draft that came from the phone, using the same confirm flow as a desktop
+    /// utterance so there is one gate, not two.
+    /// </summary>
+    public void LoadPhoneDraft(string rawTranscript, string cleanedDraft, string timings)
+    {
+        BeginNewUtterance();
+        RawTranscript = rawTranscript;
+        DraftText = cleanedDraft;
+        StageTimings = timings;
+        ErrorMessage = string.Empty;
+        IsDraftEditable = true;
+        State = WidgetState.Confirm;
+        StatusLine = "Phone draft — review, then confirm";
     }
 
     public void DismissError()
