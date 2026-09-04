@@ -85,7 +85,7 @@ public sealed record SpokenReviewResult(
 /// kept warm by the caller.
 /// </para>
 /// </remarks>
-public sealed class SpokenReviewPlayer : IDisposable
+public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
 {
     private readonly PiperSpeechSynthesizer _synthesizer;
     private readonly bool _ownsSynthesizer;

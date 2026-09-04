@@ -157,6 +157,23 @@
                            Margin="0,6,0,0"
                            TextWrapping="Wrap" />
 
+                <!-- Spoken review: reading indicator and measured speech latency -->
+                <StackPanel Visibility="{Binding HasSpeechStatus, Converter={StaticResource BoolToVis}}"
+                            Orientation="Horizontal"
+                            Margin="0,4,0,0">
+                    <TextBlock Text="🔊"
+                               FontSize="10"
+                               Margin="0,0,5,0"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding IsSpeakingReview, Converter={StaticResource BoolToVis}}" />
+                    <TextBlock Text="{Binding SpeechStatus}"
+                               FontSize="10"
+                               FontFamily="Consolas"
+                               Foreground="#A78BFA"
+                               TextWrapping="Wrap"
+                               MaxWidth="360" />
+                </StackPanel>
+
                 <!-- Error panel if error state -->
                 <Border Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}"
                         Margin="0,4,0,0"

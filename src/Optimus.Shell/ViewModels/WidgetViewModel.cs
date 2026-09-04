@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using Optimus.Core.Audio;
+using Optimus.Core.Speech;
 using Optimus.Inference;
 using Optimus.Providers;
 using Optimus.Providers.Windows;
@@ -35,6 +36,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private bool _isDraftEditable = true;
     private string _lastSentText = string.Empty;
     private string _phoneStatus = string.Empty;
+    private ISpokenReview? _speech;
+    private string _speechStatus = string.Empty;
+    private bool _isSpeakingReview;
+    private string _lastSpokenKey = string.Empty;
 
     public WidgetState State
     {
@@ -153,6 +158,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasSelectedDestination));
                 UpdateWindowChoices();
+
+                // A draft may already be waiting for a destination before it can be read out.
+                MaybeSpeakReview();
             }
         }
     }
@@ -220,6 +228,40 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool HasPhoneStatus => !string.IsNullOrWhiteSpace(PhoneStatus);
+
+    /// <summary>
+    /// True while the draft is being read aloud. Capture is closed for this whole window so the
+    /// microphone cannot hear the app's own speech.
+    /// </summary>
+    public bool IsSpeakingReview
+    {
+        get => _isSpeakingReview;
+        private set
+        {
+            if (_isSpeakingReview != value)
+            {
+                _isSpeakingReview = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>Spoken-review latencies, or why speech was unavailable.</summary>
+    public string SpeechStatus
+    {
+        get => _speechStatus;
+        private set
+        {
+            if (_speechStatus != value)
+            {
+                _speechStatus = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasSpeechStatus));
+            }
+        }
+    }
+
+    public bool HasSpeechStatus => !string.IsNullOrWhiteSpace(SpeechStatus);
 
     public string DestinationName
     {
@@ -327,6 +369,16 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public void AttachPipeline(VoicePipeline pipeline) =>
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
 
+    /// <summary>
+    /// Supplies the spoken-review player. Without one the widget stays fully usable and simply
+    /// does not speak.
+    /// </summary>
+    public void AttachSpeech(ISpokenReview speech) =>
+        _speech = speech ?? throw new ArgumentNullException(nameof(speech));
+
+    /// <summary>Reports voice warmup, or why the voice is unavailable.</summary>
+    public void SetSpeechReady(string status) => SpeechStatus = status;
+
     /// <summary>Loads the configured destinations. No destination is selected by default.</summary>
     public void AttachDestinations(DestinationRegistry registry)
     {
@@ -362,6 +414,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = true;
         State = WidgetState.Confirm;
         StatusLine = "Manual draft loaded — choose a destination, review, then confirm";
+        MaybeSpeakReview();
     }
 
     /// <summary>
@@ -378,6 +431,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = true;
         State = WidgetState.Confirm;
         StatusLine = "Phone draft — review, then confirm";
+        MaybeSpeakReview();
     }
 
     /// <summary>Mirrors a phone-confirmed draft into the widget's single send lifecycle.</summary>
@@ -433,6 +487,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     {
         // Claims a new generation so an in-flight result cannot land after the cancel.
         BeginNewUtterance();
+        _speech?.Cancel();
+        _lastSpokenKey = string.Empty;
+        SpeechStatus = string.Empty;
         DraftText = string.Empty;
         RawTranscript = string.Empty;
         StageTimings = string.Empty;
@@ -528,6 +585,109 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         State = WidgetState.Error;
         ErrorMessage = result.Detail;
         StatusLine = $"NOT sent to {destination.DisplayName}";
+    }
+
+    /// <summary>
+    /// Reads the visible draft and selected destination aloud, once per draft/destination pair.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Speech needs both a draft and an explicitly chosen destination, because the review states
+    /// the destination out loud. With a draft but no destination the widget waits and says so
+    /// rather than reading a prompt with no target.
+    /// </para>
+    /// <para>
+    /// Capture is stopped for the whole spoken window and restarted afterwards, so the microphone
+    /// cannot pick up the app's own speech. Finishing the review never sends anything: it only
+    /// plays the chime and reports that approval may begin. Confirm and Cancel stay live
+    /// throughout as fallback controls.
+    /// </para>
+    /// </remarks>
+    private void MaybeSpeakReview()
+    {
+        ISpokenReview? speech = _speech;
+        if (speech == null || State != WidgetState.Confirm)
+        {
+            return;
+        }
+
+        string draft = DraftText;
+        DestinationOption? destination = SelectedDestination;
+
+        if (string.IsNullOrWhiteSpace(draft))
+        {
+            return;
+        }
+
+        if (destination == null)
+        {
+            SpeechStatus = "Choose a destination to hear the review.";
+            return;
+        }
+
+        // One reading per draft and destination, so re-probing or a redundant property change
+        // cannot make it speak twice.
+        string key = destination.DestinationId + "" + draft;
+        if (string.Equals(_lastSpokenKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastSpokenKey = key;
+
+        string destinationName = destination.DisplayName;
+        int generation = Volatile.Read(ref _utteranceGeneration);
+
+        IsSpeakingReview = true;
+        SpeechStatus = "Reading the draft aloud...";
+        _controller?.Stop();
+
+        _ = Task.Run(async () =>
+        {
+            SpokenReviewResult result;
+            try
+            {
+                result = await speech.SpeakReviewAsync(draft, destinationName).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                result = new SpokenReviewResult(SpokenReviewOutcome.Failed, null, ex.Message);
+            }
+
+            _dispatchAction(() =>
+            {
+                IsSpeakingReview = false;
+
+                // Capture reopens only after the speaker is genuinely silent.
+                _controller?.Start();
+
+                // A newer utterance started while this was reading; its own review owns the UI.
+                if (!IsCurrent(generation))
+                {
+                    return;
+                }
+
+                switch (result.Outcome)
+                {
+                    case SpokenReviewOutcome.Completed:
+                        SpeechStatus = result.Timings?.Summary ?? "Review spoken.";
+                        // Approval listening may begin. Nothing is sent here; the user still
+                        // confirms, by voice in a later slice or with the buttons now.
+                        StatusLine = $"Send this to {destinationName}, or redictate?";
+                        break;
+
+                    case SpokenReviewOutcome.Cancelled:
+                        SpeechStatus = "Reading cancelled.";
+                        break;
+
+                    default:
+                        // Speech is a convenience; losing it must not block the send path.
+                        SpeechStatus = $"Voice unavailable: {result.FailureDetail}";
+                        StatusLine = "Review the draft, then confirm";
+                        break;
+                }
+            });
+        });
     }
 
     /// <summary>Re-probes every destination and refreshes the picker.</summary>
@@ -698,6 +858,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                     StatusLine = result.CleanupApplied
                         ? "Review the draft, then confirm"
                         : $"Cleanup unavailable ({result.CleanupUnavailableReason}) — showing raw transcript";
+                    MaybeSpeakReview();
                 });
             }
             catch (OperationCanceledException)

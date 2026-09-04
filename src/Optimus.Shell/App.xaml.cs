@@ -7,6 +7,7 @@ using System.Windows;
 using Optimus.Core.Audio;
 using Optimus.Core.Hotkeys;
 using Optimus.Core.Phone;
+using Optimus.Core.Speech;
 using Optimus.Inference;
 using Optimus.Providers;
 using Optimus.Shell.ViewModels;
@@ -25,6 +26,7 @@ public partial class App : Application
     private DestinationRegistry? _destinations;
     private PhoneEndpoint? _phoneEndpoint;
     private PhoneSession? _phoneSession;
+    private SpokenReviewPlayer? _speech;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -78,6 +80,32 @@ public partial class App : Application
                         viewModel.State = Models.WidgetState.Error;
                         viewModel.StatusLine = "Models unavailable";
                     });
+                }
+            });
+        }
+
+        // Spoken review. --no-voice skips it; the widget stays fully usable without speech.
+        if (!e.Args.Contains("--no-voice"))
+        {
+            WidgetViewModel viewModel = _viewModel;
+            _speech = new SpokenReviewPlayer();
+            _viewModel.AttachSpeech(_speech);
+
+            SpokenReviewPlayer speech = _speech;
+
+            // Warm the voice off the UI thread so the first review does not pay model load.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    speech.Warmup();
+                    Dispatcher.Invoke(() =>
+                        viewModel.SetSpeechReady($"Voice ready ({speech.WarmupMilliseconds} ms warmup)"));
+                }
+                catch (Exception ex)
+                {
+                    // A missing or broken voice must not block dictation or sending.
+                    Dispatcher.Invoke(() => viewModel.SetSpeechReady($"Voice unavailable: {ex.Message}"));
                 }
             });
         }
@@ -149,6 +177,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _speech?.Dispose();
         _phoneSession?.Dispose();
         _phoneEndpoint?.Dispose();
         _viewModel?.Dispose();
