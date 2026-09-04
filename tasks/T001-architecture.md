@@ -88,7 +88,7 @@ Manually verify every referenced path and cross-document link. Record all checks
 
 - Base commit: `fdca807` (`chore: establish multi-model project workflow`)
 - Round 1 commit: `27d065c`, containing every deliverable.
-- Round 2 commit: the correction commit recorded under "Round 2 corrections" below. Sol should review the branch head against the base commit.
+- Round 2 commit: `a1ddef4` - the correction commit carrying every change described under "Round 2 corrections" below. The only later commit on this branch is the one that writes this hash into the evidence, so Sol should review the branch head against the base commit.
 
 ### Deliverables produced
 
