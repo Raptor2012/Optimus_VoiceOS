@@ -10,9 +10,12 @@ The working flow is:
 2. Speak.
 3. Transcribe on the PC with fast local STT.
 4. Clean the text with a small local LLM.
-5. Show the exact draft and an explicitly selected destination.
-6. Send only after the user confirms.
-7. Show short event-driven status and completion feedback.
+5. Show the exact cleaned draft and an explicitly selected destination.
+6. Read the exact cleaned draft and destination aloud on the device that started the request.
+7. Automatically listen for a spoken confirmation, redictation, or cancellation command.
+8. Send only after an affirmative confirmation.
+9. Observe the exact coding-agent window for visible progress and its visible final response.
+10. Speak short event-driven progress updates and read the final response aloud on the originating device.
 
 This is personal software, not a commercial product. The priority is a useful end-to-end build, not production-grade protocols, generalized infrastructure, exhaustive edge cases, or release certification.
 
@@ -35,7 +38,12 @@ Use one tiny always-on-top widget with these states:
 - `Listening`
 - `Processing`
 - `Confirm`
+- `ReadingDraft`
+- `AwaitingApproval`
+- `Redictating`
 - `Sending`
+- `Monitoring`
+- `Speaking`
 - `Sent`
 - `Error`
 
@@ -43,8 +51,12 @@ It shows:
 
 - transcript or cleaned draft;
 - explicit destination card;
-- edit, confirm, and cancel controls;
+- spoken-review/approval state;
+- edit, confirm, redictate, and cancel controls as fallbacks;
 - one short status line.
+
+The normal desktop path requires no mouse after the initial push-to-talk hold/release. Buttons
+remain available as recovery controls, not as the primary confirmation mechanism.
 
 ### Pixel 9a app
 
@@ -53,9 +65,10 @@ Build a small native Kotlin/Jetpack Compose app that mirrors the useful parts of
 - push-to-talk;
 - transcript and cleaned draft;
 - explicit destination selection;
-- edit, confirm, and cancel;
+- exact-draft voice playback;
+- edit, spoken confirm, redictate, and cancel;
 - current agent status;
-- short final summary.
+- spoken visible final response.
 
 The phone captures audio; the PC performs STT, cleanup, and agent sending. The phone is a remote control for the user's PC, not an independent inference server.
 
@@ -64,16 +77,46 @@ The phone captures audio; the PC performs STT, cleanup, and agent sending. The p
 - The user manually configures each destination by selecting an open Windows application window and assigning a label.
 - The selected destination is visible before every send.
 - The app never guesses, substitutes, or silently changes a destination.
-- PC confirmation is a local in-memory UI action.
-- Phone confirmation is a simple message to the PC over the existing private connection.
+- A destination can be chosen by its explicitly configured voice alias, such as
+  `To Codex Project Y`, or by a visible card. Spoken routing is accepted only when it resolves
+  to exactly one configured destination; otherwise Optimus asks rather than guessing.
+- A destination selection is cleared for every new utterance. Previous choices do not silently
+  carry into the next prompt.
+- After TTS finishes reading the exact draft and destination, Optimus plays a chime and listens
+  automatically for an approval command. No second hotkey or mouse action is required.
+- Initial affirmative vocabulary: `yes`, `yeah`, `yep`, `confirm`, `send`, `send it`,
+  `go ahead`, and `do it`. Redictation vocabulary: `redictate`, `try again`, and `start over`.
+  `cancel` cancels. Anything unclear causes a short reprompt and never sends.
+- The microphone is disabled while TTS is playing and enabled only after the approval chime,
+  preventing speaker output from confirming itself. The MVP is half-duplex; barge-in is later.
+- `Redictate` discards the current draft, plays a chime, and immediately begins a replacement
+  capture without requiring another hotkey.
+- PC and phone confirmation use the same in-memory draft lifecycle. Confirm, cancel, sending,
+  and completion on one surface must update the other so a second active send gate cannot remain.
 - The PC sends the exact confirmed draft snapshot.
 - No cryptographic receipt, MAC, attestation, replay ledger, or approval-signing system is needed for this personal-use MVP.
 
 ### Agent feedback
 
-Start with visual event updates and a final text summary. After the core flow works, add concise local voice phrases for meaningful transitions such as tests failed, agent question, and work completed. Do not narrate ordinary file edits.
+Each destination adapter gains a small observation side in addition to sending. It watches only
+the exact bound application window and emits visible events such as planning, editing, running
+tests, tests passed/failed, agent question, and completion. Start with Windows UI Automation and
+use a separate observer per application where their accessibility trees differ.
 
-Custom voice design and sophisticated streaming TTS are optional later work, not prerequisites for a testable build.
+Optimus may speak visible application status, visible reasoning/progress text, tool and skill
+activity exposed by the UI, and the visible final response. It cannot access or narrate a model's
+private hidden chain-of-thought. Provide two narration modes on both widget and phone:
+
+- `Concise`: meaningful transitions, questions, failures, completion, and the final response.
+- `Comprehensive`: all newly visible English reasoning/progress messages plus the final response.
+
+Provide a separate `Narrate tools & skills` toggle. When enabled, announce visible tool/skill
+names, intent, commands, and short result summaries. Do not dictate raw binary data or extremely
+long logs character by character. Deduplicate repeated UI text so rerenders do not repeat speech.
+
+The device that initiated the utterance owns the audio conversation. PC-originated requests play
+TTS and collect approval on the PC. Pixel-originated requests receive synthesized audio from the
+PC and return approval audio from the Pixel. Do not unexpectedly play the same response on both.
 
 ## Lean architecture
 
@@ -89,10 +132,11 @@ Required pieces:
 - in-memory WASAPI capture;
 - one local STT integration;
 - one local cleanup integration;
+- one local TTS integration;
 - floating WPF widget;
 - local destination configuration;
-- one small Windows sender adapter per target application;
-- a minimal HTTP/WebSocket endpoint for the Pixel app;
+- one small Windows send/observe adapter per target application;
+- the existing minimal direct TCP endpoint for the Pixel app;
 - simple timing logs around the real path.
 
 A sender adapter needs only:
@@ -101,6 +145,13 @@ A sender adapter needs only:
 - `ActivateConfiguredDestination`
 - `InsertText`
 - `Submit`
+
+An observer needs only:
+
+- bind to the exact configured window;
+- emit coarse visible progress changes;
+- detect an agent question or completion;
+- return the visible final response.
 
 Adapters may use Windows UI Automation, a configured window identity, and clipboard insertion where needed. If the configured window is missing or ambiguous, fail visibly. Never choose a substitute.
 
@@ -116,6 +167,9 @@ Use one small, app-private JSON message set and binary/audio frames. Implement o
 - `ConfirmSend`
 - `Cancel`
 - `StatusUpdated`
+- synthesized speech audio and playback state
+- `ApprovalAudio`
+- visible agent event/final-response updates
 
 Do not build a general public protocol or compatibility layer. There is one current PC build and one current phone build; update them together.
 
@@ -139,6 +193,18 @@ Do not build a multi-engine model platform before the application works.
   reasoning models, but with few-shot prompting Gemma 4 returns a clean one-line rewrite in
   ~15 tokens, while Qwen3.5 spent its whole token budget reasoning and returned no text.
 - If a model fails to load or run, show an error. Do not silently switch to another engine.
+- TTS: select one local engine through a narrow Kokoro-versus-Piper measurement on this PC.
+  Measure warm time-to-first-audio, streaming gap, real-time factor, intelligibility, and
+  suitability for an original deep, cinematic, calm-authoritative machine voice. It may evoke
+  the broad qualities the user likes in Optimus Prime—weight, restraint, clarity, resonance—but
+  must not copy a specific actor, character performance, or protected voice. Commit to the winner;
+  do not build a TTS engine marketplace or runtime fallback chain.
+- TTS latency is a release gate for this personal MVP: keep the selected model warm, synthesize
+  incrementally, begin playback from the first safe phrase/sentence, and never wait for a complete
+  long agent response before speaking. Initial targets on the RTX 4070 are under 250 ms warm
+  time-to-first-audio, under 150 ms between queued speech segments, and under 200 ms from the end
+  of the review question to approval-listener readiness. Measure these on the actual machine;
+  amend only when real measurements show a concrete limit.
 - After the full PC and phone flows work, compare at most one serious alternative per stage on 20–30 real coding utterances. Replace the initial choice only if measured results are materially better.
 
 Cleanup may remove fillers, repair punctuation/casing, format dictated identifiers, and apply a small personal glossary. It may not invent requirements, select a destination, or reinterpret intent. The user sees and can edit every result before confirmation.
@@ -189,14 +255,23 @@ Keep only code that supports the current PC/phone vertical slice. Do not rewrite
 
 The user can complete ten consecutive prompts from Windows and ten from the Pixel 9a through:
 
-`push-to-talk -> speech -> local transcript -> cleaned draft -> explicit destination -> confirmation -> send`
+`push-to-talk -> speech -> local transcript -> cleaned draft -> exact spoken review -> automatic spoken approval -> send -> visible agent updates -> spoken final response`
 
 The MVP is useful when:
 
 - no prompt is sent without confirmation;
 - the destination never changes implicitly;
+- ordinary use after the initial hold/release requires no mouse or second hotkey;
+- TTS speaks the exact cleaned draft and exact destination before approval;
+- unclear approval speech never sends;
+- redictation fully replaces the prior draft;
 - cleanup does not change intent in the dogfood set;
 - Claude, Antigravity, and Codex can each receive confirmed text;
+- a phone confirm/cancel/send cannot leave an independently sendable duplicate draft on the PC;
+- visible agent completion is detected and its final response is spoken on the originating device;
+- the user can switch between concise and comprehensive visible narration and independently
+  enable or disable visible tool/skill announcements;
+- warm TTS meets the measured latency targets or records the smallest proven target-machine limit;
 - phone disconnects and ordinary component failures return to a usable state;
 - stage timings identify real latency bottlenecks.
 
@@ -209,7 +284,10 @@ These are dogfood checks, not release certification.
 3. Local STT and cleanup visible in the widget.
 4. Claude sender adapter, then Antigravity and Codex.
 5. Minimal PC endpoint and Pixel 9a push-to-talk/confirmation UI.
-6. Full PC and phone dogfood pass with measured latency fixes.
-7. Optional event summaries/TTS and installation polish.
+6. Exact local TTS draft review and automatic spoken approval/redictation on PC.
+7. Explicit spoken destination aliases.
+8. Route the same TTS/approval loop through the Pixel.
+9. Observe visible agent progress/final responses and speak event-driven feedback.
+10. Full PC and phone dogfood pass with measured latency fixes, then installation polish.
 
 Executable slices are in `docs/BACKLOG.md`.

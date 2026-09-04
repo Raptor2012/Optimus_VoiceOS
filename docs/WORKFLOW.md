@@ -31,4 +31,8 @@ If none apply, pass and move on. Future hardening and hypothetical release risks
 
 ## Current direction
 
-The T003 protocol/crypto branch is parked and must not be merged into the MVP. Start with S000 cleanup, then build the Windows path and the minimal Pixel 9a path.
+The T003 protocol/crypto branch is parked and must not be merged into the MVP. S000-S005 provide
+the first Windows/Pixel vertical slice. Finish the two recorded S005 state fixes, then implement
+S006-S010 in order: exact local TTS review, automatic spoken approval and routing, Pixel audio,
+exact-window observation, and event-driven spoken feedback. Do not turn any slice into a protocol,
+security, or framework project.

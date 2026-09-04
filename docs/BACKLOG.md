@@ -130,7 +130,96 @@ readiness. Verified on the Pixel: connect, capture, and status round trip.
 Remaining: the ten-prompt count. It needs speech and a window bound on the PC, so it belongs to
 the user's dogfood pass.
 
-## S006 — Dogfood and measured latency fixes
+Before closing S005, fix two state bugs found in review:
+
+- phone Cancel and phone send completion must transition the desktop widget too, so the same
+  draft cannot remain independently confirmable and be sent twice;
+- starting any new phone utterance must clear the prior destination selection, requiring an
+  explicit choice for the new prompt.
+
+## S006 — Local TTS and exact spoken review
+
+Owner: Claude Opus 5
+
+Make spoken review part of the primary desktop path. Run a narrow measurement of Kokoro and
+Piper on the target PC, select one engine, and integrate only that winner. Create one original
+deep, cinematic, calm-authoritative machine voice profile. It may have weight, restraint, clarity,
+and resonance, but must not imitate Optimus Prime, a specific actor, or an existing performance.
+Keep it warm and stream playback toward the latency targets in `PROJECT_PLAN.md`.
+
+After cleanup, speak the exact cleaned draft followed by the exact destination and the question:
+`Send this to <destination>, or redictate?` Disable capture during playback and play a short chime
+when approval listening begins.
+
+Done when ten varied drafts, including identifiers and punctuation, are displayed and spoken
+exactly; playback starts quickly enough for normal use; microphone input cannot hear the app's
+own TTS; warm time-to-first-audio and segment gaps are measured; and the mouse buttons remain
+available only as fallback controls.
+
+Do not build multiple-engine routing, cloud TTS, voice cloning, impersonations, barge-in, or a
+general audio graph.
+
+## S007 — Spoken approval, redictation, and explicit voice routing
+
+Owner: Claude Opus 5
+
+After the TTS review ends, automatically capture one short local command without another hotkey.
+Recognize the finite affirmative, redictate, and cancel vocabulary in `PROJECT_PLAN.md`. Do not
+run Gemma cleanup on approval commands. An unclear command reprompts and sends nothing.
+
+Support explicit configured destination prefixes such as `To Codex Project Y`. Resolve only an
+exact unique voice alias, remove the routing phrase from the displayed prompt, and ask when it is
+missing or ambiguous. Clear the selected destination on every new utterance.
+
+Done when the user can complete ten desktop prompts using only one initial hotkey hold/release,
+with affirmative variants sending the exact visible snapshot, redictate replacing it completely,
+cancel sending nothing, and ambiguous routing never selecting a destination.
+
+## S008 — Pixel spoken review and approval
+
+Owner: Claude Opus 5
+
+Route synthesized review audio to the device that initiated the request. For a Pixel utterance,
+the PC synthesizes the same exact draft/destination review and streams it to the phone; the phone
+plays it, then captures the approval command after the chime. Confirm/cancel/send/result state is
+mirrored between phone and PC as one lifecycle.
+
+Done when ten Pixel-originated prompts can be reviewed, confirmed or redictated, and sent without
+touching the PC or pressing a phone confirmation button. Disconnect during review or approval
+sends nothing and returns to a usable state.
+
+## S009 — Observe coding-agent windows
+
+Owner: Claude Opus 5
+
+Extend each exact-window adapter with the smallest practical Windows UI Automation observer.
+Prototype and prove one application first, then implement Claude, Antigravity, and Codex-specific
+observers. Capture newly visible English reasoning/progress messages, coarse events, visible tool
+and skill activity, agent questions, completion, and the visible final response. Never claim
+access to private hidden chain-of-thought, and deduplicate text repeated by UI rerenders.
+
+Done when a real prompt to each application produces correctly attributed visible progress and a
+final response from only the bound window; activity in another window is ignored.
+
+## S010 — Event-driven voice feedback
+
+Owner: Claude Opus 5
+
+Add a visible narration-mode control to both widget and phone: `Concise` and `Comprehensive`.
+Concise speaks transitions such as planning, editing files, running tests, tests passed or failed,
+agent question, completed, and the final response. Comprehensive streams every newly visible
+English reasoning/progress message and the final response. Add a separate `Narrate tools & skills`
+toggle that announces visible tool/skill names, intent, commands, and short results. Long code,
+binary data, and repetitive logs are announced/summarized instead of spelled out.
+
+Speech must be incremental: start on complete safe phrases/sentences instead of waiting for the
+whole agent response, preserve ordering, and avoid speaking stale text after a newer run starts.
+
+Done when PC- and Pixel-originated jobs receive ordered, non-repetitive speech on the correct
+device; both narration modes work; the tools/skills toggle works independently; and long visible
+responses begin speaking within the warm streaming latency budget rather than after completion.
+
+## S011 — Dogfood and measured latency fixes
 
 Owner: Claude Opus 5; Sol reviews only blockers
 
@@ -140,9 +229,10 @@ Done when the user says the tool is useful enough to keep running during normal 
 
 ## Optional later slices
 
-- S007: concise event summaries and minimal local TTS.
-- S008: run-at-startup, settings polish, and a simple installer.
-- S009: security hardening only if the user later wants access outside private LAN/Tailscale or sees a concrete risk worth addressing.
+- S012: run-at-startup, settings polish, and a simple installer.
+- S013: always-listening wake word for truly zero-key initiation, only if the user wants it after
+  the one-hold workflow is proven.
+- S014: security hardening only if the user later wants access outside private LAN/Tailscale or sees a concrete risk worth addressing.
 
 ## Review rule
 
