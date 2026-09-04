@@ -621,5 +621,5 @@ Output:
 
 ## Review history
 
-- Review report:
-- Verdict:
+- Review report: `reviews/T002-sol.md`
+- Verdict: `PASS`
