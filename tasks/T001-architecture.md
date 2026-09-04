@@ -151,5 +151,7 @@ grep -oE '^\| T0[0-9]{2}' docs/BACKLOG.md | tr -d '| ' | sort -u
 
 ## Review history
 
-- Review report: Not yet reviewed
-- Verdict: Pending
+- Round 1: `reviews/T001-sol.md`
+- Reviewed commit: `122cbbf`
+- Verdict: `CHANGES_REQUIRED`
+- Blocking findings: Android/Windows approval primitives, Android TLS-exporter feasibility, queue privacy contradiction, explicit-session enforcement, GPU preemption/latency consistency, and provider credential ownership.
