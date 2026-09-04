@@ -1,0 +1,45 @@
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+
+# JavaScript tooling
+node_modules/
+
+# Python inference tooling
+__pycache__/
+*.py[cod]
+.venv/
+
+# Models, generated audio, and local data
+models/
+artifacts/
+benchmarks/results/
+data/
+*.wav
+*.onnx
+*.safetensors
+*.gguf
+
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+*.pfx
+*.key
+*.pem
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
