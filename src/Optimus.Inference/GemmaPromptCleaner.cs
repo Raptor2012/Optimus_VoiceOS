@@ -23,6 +23,9 @@ public sealed class GemmaPromptCleaner : IPromptCleaner
 {
     private const int MaxNewTokens = 160;
 
+    /// <summary>Short, representative, and deliberately throwaway.</summary>
+    private const string PrimingUtterance = "um so like add a comment here";
+
     private const string SystemPrompt =
         "Rewrite dictated speech as clean written text. Remove filler words and false starts, " +
         "fix punctuation and capitalization, and write code identifiers, file paths and flags " +
@@ -97,6 +100,28 @@ public sealed class GemmaPromptCleaner : IPromptCleaner
             applied,
             applied ? null : "Cleanup returned no usable change");
     }
+
+    /// <summary>
+    /// Sends one short throwaway utterance through the exact same message shape as a real
+    /// cleanup, so the server caches the shared system + few-shot prefix.
+    /// </summary>
+    public async Task PrimeAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        EnsureLoaded();
+
+        var stopwatch = Stopwatch.StartNew();
+        await _server
+            .ChatAsync(BuildMessages(PrimingUtterance), MaxNewTokens, cancellationToken)
+            .ConfigureAwait(false);
+        stopwatch.Stop();
+
+        PrimeMilliseconds = stopwatch.ElapsedMilliseconds;
+    }
+
+    /// <summary>Milliseconds the priming call took, for diagnostics.</summary>
+    public long PrimeMilliseconds { get; private set; }
 
     internal static IReadOnlyList<LlamaServerProcess.ChatMessage> BuildMessages(string rawTranscript)
     {

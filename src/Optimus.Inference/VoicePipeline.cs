@@ -30,11 +30,31 @@ public sealed class VoicePipeline : IDisposable
 
     public bool IsWarm => _transcriber.IsLoaded && _cleaner.IsLoaded;
 
-    /// <summary>Loads both models so the first utterance does not pay for it.</summary>
+    /// <summary>Loads both models. Prefer <see cref="WarmupAsync"/>, which also primes them.</summary>
     public void Warmup()
     {
         _transcriber.EnsureLoaded();
         _cleaner.EnsureLoaded();
+    }
+
+    /// <summary>
+    /// Loads and then primes both models, so the first real utterance runs at steady-state
+    /// latency instead of paying first-call cost.
+    /// </summary>
+    public async Task WarmupAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        _transcriber.EnsureLoaded();
+
+        // One short silent buffer forces the ONNX graph through a real execution.
+        byte[] primingAudio = new byte[16000 * sizeof(short) / 2]; // 0.5 s of 16 kHz mono PCM16
+        _transcriber.Transcribe(primingAudio, cancellationToken);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _cleaner.EnsureLoaded();
+        await _cleaner.PrimeAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

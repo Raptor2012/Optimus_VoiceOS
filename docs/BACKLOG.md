@@ -69,6 +69,21 @@ Done when:
 - switching is always manual and visible;
 - an unavailable or ambiguous window fails without sending elsewhere.
 
+Status: adapters implemented and verified. Configured targets are the `claude`, `Antigravity`
+and `ChatGPT` processes; Codex is a workspace inside the ChatGPT desktop app, so the adapter
+binds that app's window and cannot detect which workspace is selected.
+
+Verified on the real machine: the last two done-conditions hold — switching is manual (nothing
+is selected or bound by default, and a lone candidate still needs an explicit bind), and the
+ambiguous case fires for real (the ChatGPT app has two identical top-level windows, reported as
+`AmbiguousWindow` with no send possible). The live Win32 path was proven end to end against a
+controlled window: focus, Unicode typing and submit, with the received text compared
+byte-for-byte against the confirmed draft.
+
+Remaining: the prompt-volume conditions (ten to Claude, five each to Antigravity and Codex).
+Those submit real turns to live agent sessions, and the Claude desktop app hosts the session
+doing this work, so they belong to the user's dogfood pass rather than an automated run.
+
 ## S004 — Minimal PC-to-phone connection
 
 Owner: Claude Opus 5

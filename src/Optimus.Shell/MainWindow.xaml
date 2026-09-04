@@ -19,6 +19,7 @@
         MouseDown="OnWindowMouseDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <vm:InverseBooleanConverter x:Key="InverseBool" />
     </Window.Resources>
 
     <Border Margin="10"
@@ -143,7 +144,8 @@
                              TextWrapping="Wrap"
                              AcceptsReturn="True"
                              VerticalScrollBarVisibility="Auto"
-                             CaretBrush="#FFFFFF" />
+                             CaretBrush="#FFFFFF"
+                             IsReadOnly="{Binding IsDraftEditable, Converter={StaticResource InverseBool}}" />
                 </StackPanel>
 
                 <!-- Per-stage latency -->
@@ -187,19 +189,104 @@
                     </Grid>
                 </Border>
 
+                <!-- Destination picker: always visible, always manual -->
+                <StackPanel Margin="0,10,0,0">
+                    <Grid Margin="0,0,0,3">
+                        <TextBlock Text="DESTINATION"
+                                   FontSize="9"
+                                   FontWeight="SemiBold"
+                                   Foreground="#636366"
+                                   HorizontalAlignment="Left" />
+                        <Button Content="Refresh"
+                                Command="{Binding RefreshDestinationsCommand}"
+                                HorizontalAlignment="Right"
+                                Padding="6,1"
+                                Background="#2C2C34"
+                                Foreground="#8E8E93"
+                                BorderThickness="0"
+                                FontSize="9"
+                                Cursor="Hand" />
+                    </Grid>
+
+                    <ListBox ItemsSource="{Binding Destinations}"
+                             SelectedItem="{Binding SelectedDestination}"
+                             Background="#16161B"
+                             BorderBrush="#383842"
+                             BorderThickness="1"
+                             Foreground="#E5E5EA">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="0,1">
+                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                        <Ellipse.Fill>
+                                            <SolidColorBrush Color="{Binding StatusColor}" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding DisplayName}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding StatusDetail}"
+                                               Foreground="#8E8E93"
+                                               FontSize="9"
+                                               Margin="6,0,0,0"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="220" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- Window binding: shown only when a choice is actually required -->
+                    <StackPanel Visibility="{Binding NeedsWindowChoice, Converter={StaticResource BoolToVis}}"
+                                Margin="0,6,0,0">
+                        <TextBlock Text="PICK THE EXACT WINDOW"
+                                   FontSize="9"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF9500"
+                                   Margin="0,0,0,2" />
+                        <ListBox ItemsSource="{Binding WindowChoices}"
+                                 SelectedItem="{Binding SelectedWindowChoice}"
+                                 Background="#16161B"
+                                 Foreground="#E5E5EA"
+                                 BorderBrush="#FF9500"
+                                 BorderThickness="1"
+                                 MaxHeight="80"
+                                 FontSize="10">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding DisplayLabel}" TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Button Content="Bind to this window"
+                                Command="{Binding BindWindowCommand}"
+                                HorizontalAlignment="Left"
+                                Margin="0,4,0,0"
+                                Padding="8,2"
+                                Background="#FF9500"
+                                Foreground="#1E1E24"
+                                BorderThickness="0"
+                                FontSize="10"
+                                Cursor="Hand" />
+                    </StackPanel>
+                </StackPanel>
+
                 <!-- Confirm panel if confirm state -->
                 <Grid Visibility="{Binding IsConfirming, Converter={StaticResource BoolToVis}}"
-                      Margin="0,4,0,0">
+                      Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0"
-                               Text="{Binding DestinationName, StringFormat='Destination: {0}'}"
+                               Text="{Binding DestinationName, StringFormat='→ {0}'}"
                                Foreground="#0A84FF"
                                FontSize="11"
-                               VerticalAlignment="Center" />
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
                     <Button Grid.Column="1"
                             Content="Cancel"
                             Command="{Binding CancelCommand}"
@@ -208,15 +295,17 @@
                             Background="#383842"
                             Foreground="#FFFFFF"
                             BorderThickness="0"
-                            FontSize="10" />
+                            FontSize="10"
+                            Cursor="Hand" />
                     <Button Grid.Column="2"
-                            Content="Confirm"
+                            Content="Confirm &amp; Send"
                             Command="{Binding ConfirmCommand}"
                             Padding="8,2"
                             Background="#0A84FF"
                             Foreground="#FFFFFF"
                             BorderThickness="0"
-                            FontSize="10" />
+                            FontSize="10"
+                            Cursor="Hand" />
                 </Grid>
             </StackPanel>
 

@@ -37,11 +37,30 @@ dotnet run --project .\src\Optimus.Shell -c Release
 
 Add `--no-models` for capture-only (skips the ~3.8 GB load), or `--mock` for no hardware at all.
 
-Model-backed tests are opt-in so the normal suite stays fast:
+## Destinations
+
+Three fixed Windows targets, matched by process name:
+
+| Destination | Process | Note |
+| --- | --- | --- |
+| Claude | `claude` | Claude desktop app |
+| Antigravity | `Antigravity` | Antigravity IDE |
+| Codex (ChatGPT app) | `ChatGPT` | Codex is a workspace *inside* the ChatGPT desktop app |
+
+Nothing is selected or bound automatically. Pick a destination, then bind it to one exact
+window; when an app has several windows (the ChatGPT app normally has two) the widget lists them
+and refuses to send until you choose. A closed or ambiguous target fails the send and leaves the
+draft untouched — it never falls back to another window.
+
+Because Codex and ChatGPT share one window and are switched by an in-app selector, the adapter
+cannot tell which workspace is active. Make sure the bound window has Codex selected.
+
+Model-backed and UI tests are opt-in so the normal suite stays fast:
 
 ```powershell
 $env:OPTIMUS_MODEL_SMOKE=1   # Parakeet + Gemma end-to-end
 $env:OPTIMUS_MIC_SMOKE=1     # real microphone capture
+$env:OPTIMUS_UI_SMOKE=1      # live focus/type/submit (steals focus while it runs)
 dotnet test .\Optimus.sln -c Release
 ```
 

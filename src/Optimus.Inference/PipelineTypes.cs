@@ -52,4 +52,14 @@ public interface IPromptCleaner : IDisposable
     void EnsureLoaded();
 
     Task<CleanupResult> CleanAsync(string rawTranscript, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs one throwaway cleanup so the first real prompt does not pay first-call cost.
+    /// </summary>
+    /// <remarks>
+    /// Loading the weights is not enough. The measured 3.8 s first call against ~900 ms
+    /// afterwards is prompt processing of the fixed system + few-shot prefix, which the server
+    /// then keeps in its KV cache. Priming pays that once, in the background, at startup.
+    /// </remarks>
+    Task PrimeAsync(CancellationToken cancellationToken = default);
 }

@@ -45,8 +45,8 @@ public class VoicePipelineSmokeTests
         using var pipeline = new VoicePipeline();
 
         var warmupStart = DateTime.UtcNow;
-        pipeline.Warmup();
-        _output.WriteLine($"Model load        : {(DateTime.UtcNow - warmupStart).TotalMilliseconds:F0} ms");
+        await pipeline.WarmupAsync();
+        _output.WriteLine($"Load + prime      : {(DateTime.UtcNow - warmupStart).TotalMilliseconds:F0} ms");
         Assert.True(pipeline.IsWarm);
 
         VoicePipelineResult result = await pipeline.ProcessAsync(pcm);
@@ -61,6 +61,16 @@ public class VoicePipelineSmokeTests
         Assert.False(string.IsNullOrWhiteSpace(result.CleanedDraft), "Cleanup produced no draft.");
         Assert.True(result.TranscribeMilliseconds > 0);
         Assert.True(result.TotalMilliseconds >= result.TranscribeMilliseconds);
+
+        // Priming during warmup must remove the first-call penalty. Un-primed, the first
+        // cleanup measured 3829 ms; primed, it should land near steady state (~900 ms).
+        Assert.True(
+            result.CleanupMilliseconds < 2500,
+            $"First cleanup after priming took {result.CleanupMilliseconds} ms; priming did not take effect.");
+
+        // A second pass confirms steady state.
+        VoicePipelineResult second = await pipeline.ProcessAsync(pcm);
+        _output.WriteLine($"Second pass       : {second.TimingSummary}");
     }
 
     /// <summary>Minimal RIFF/WAVE reader for 16-bit mono PCM test fixtures.</summary>

@@ -7,6 +7,7 @@ using System.Windows;
 using Optimus.Core.Audio;
 using Optimus.Core.Hotkeys;
 using Optimus.Inference;
+using Optimus.Providers;
 using Optimus.Shell.ViewModels;
 
 /// <summary>
@@ -20,6 +21,7 @@ public partial class App : Application
     private PushToTalkController? _controller;
     private WidgetViewModel? _viewModel;
     private VoicePipeline? _pipeline;
+    private DestinationRegistry? _destinations;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -40,6 +42,10 @@ public partial class App : Application
         _viewModel = new WidgetViewModel();
         _viewModel.AttachController(_controller);
 
+        // The three configured Windows targets. Nothing is selected by default; the user picks.
+        _destinations = new DestinationRegistry();
+        _viewModel.AttachDestinations(_destinations);
+
         // --no-models runs capture only, for testing the widget without loading ~3.8 GB.
         if (!e.Args.Contains("--no-models"))
         {
@@ -50,12 +56,13 @@ public partial class App : Application
             VoicePipeline pipeline = _pipeline;
             viewModel.StatusLine = "Loading speech and cleanup models...";
 
-            // Warm both models off the UI thread so the first utterance is not the slow one.
-            _ = Task.Run(() =>
+            // Load AND prime off the UI thread, so the first utterance runs at steady-state
+            // latency rather than paying the one-off prompt-processing cost.
+            _ = Task.Run(async () =>
             {
                 try
                 {
-                    pipeline.Warmup();
+                    await pipeline.WarmupAsync().ConfigureAwait(false);
                     Dispatcher.Invoke(() => viewModel.StatusLine = $"Ready — Hold {viewModel.HotkeyLabel} to speak");
                 }
                 catch (Exception ex)
