@@ -1,0 +1,45 @@
+using Optimus.Core.Voice;
+using Xunit;
+
+namespace Optimus.Core.Tests;
+
+public sealed class ApprovalCommandClassifierTests
+{
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("YEAH")]
+    [InlineData(" yep! ")]
+    [InlineData("confirm.")]
+    [InlineData("send")]
+    [InlineData("send, it")]
+    [InlineData("go   ahead")]
+    [InlineData("do-it")]
+    public void Classify_AcceptsEveryAffirmativeVariant(string transcript) =>
+        Assert.Equal(ApprovalCommand.Affirmative, ApprovalCommandClassifier.Classify(transcript));
+
+    [Theory]
+    [InlineData("redictate")]
+    [InlineData("Try again!")]
+    [InlineData("start-over")]
+    public void Classify_AcceptsEveryRedictationVariant(string transcript) =>
+        Assert.Equal(ApprovalCommand.Redictate, ApprovalCommandClassifier.Classify(transcript));
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData(" CANCEL!!! ")]
+    public void Classify_AcceptsCancel(string transcript) =>
+        Assert.Equal(ApprovalCommand.Cancel, ApprovalCommandClassifier.Classify(transcript));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ... ")]
+    [InlineData("please send")]
+    [InlineData("yes send")]
+    [InlineData("no")]
+    [InlineData("confirm it")]
+    [InlineData("do it now")]
+    [InlineData("cancel that")]
+    public void Classify_RejectsAnythingOutsideTheFiniteVocabulary(string? transcript) =>
+        Assert.Equal(ApprovalCommand.Unknown, ApprovalCommandClassifier.Classify(transcript));
+}
