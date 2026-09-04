@@ -214,3 +214,7 @@ Results:
 - Verdict: `CHANGES_REQUIRED`
 - Blocking findings: Android/Windows approval primitives, Android TLS-exporter feasibility, queue privacy contradiction, explicit-session enforcement, GPU preemption/latency consistency, and provider credential ownership.
 - Round 2: corrections committed on this branch. All six P1 findings and the one P2 finding are addressed as recorded above. Awaiting re-review by GPT-5.6 Sol against the new branch head.
+- Round 2 review: `reviews/T001-sol-round2.md`
+- Reviewed branch head: `7d72be1`
+- Verdict: `CHANGES_REQUIRED`
+- Remaining blockers: restart-safe queue-drop reporting and a coherent streaming-ASR/GPU-lease lifecycle without discarding deliberate sub-250 ms commands. P2 corrections are also required for signing-side low-S behavior and deterministic unknown-session errors.
