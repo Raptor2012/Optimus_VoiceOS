@@ -309,12 +309,19 @@
                 </Grid>
             </StackPanel>
 
-            <!-- Footer: Hotkey Info -->
-            <Grid Grid.Row="2" Margin="0,2,0,0">
+            <!-- Footer: hotkey, and the phone endpoint address to dial -->
+            <StackPanel Grid.Row="2" Margin="0,2,0,0">
                 <TextBlock FontSize="10"
                            Foreground="#636366"
                            Text="{Binding HotkeyLabel, StringFormat='Push-to-talk: {0} (hold to capture)'}" />
-            </Grid>
+                <TextBlock Visibility="{Binding HasPhoneStatus, Converter={StaticResource BoolToVis}}"
+                           Text="{Binding PhoneStatus}"
+                           FontSize="10"
+                           FontFamily="Consolas"
+                           Foreground="#8E8E93"
+                           Margin="0,3,0,0"
+                           TextWrapping="Wrap" />
+            </StackPanel>
         </Grid>
     </Border>
 </Window>

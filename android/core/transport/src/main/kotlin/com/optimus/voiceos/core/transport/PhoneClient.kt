@@ -124,10 +124,18 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
 
     fun stopCapture() = sendJson(JSONObject().put("t", "stopCapture"))
 
-    /** 16 kHz mono PCM16, exactly the format the PC pipeline expects. */
+    /**
+     * Queues 16 kHz mono PCM16, exactly the format the PC pipeline expects.
+     *
+     * Always snapshots. Writes are handed to the writer thread and serialized later, while the
+     * caller's buffer is normally one array the capture loop refills every 20 ms. Passing that
+     * array straight through — which the old `length == pcm.size` shortcut did on every full
+     * read, i.e. almost always — let the next chunk overwrite the bytes before they reached the
+     * socket.
+     */
     fun sendAudio(pcm: ByteArray, length: Int) {
-        val payload = if (length == pcm.size) pcm else pcm.copyOf(length)
-        write(PhoneFrameKind.AUDIO, payload)
+        require(length in 0..pcm.size) { "length $length is outside the ${pcm.size}-byte buffer" }
+        write(PhoneFrameKind.AUDIO, pcm.copyOf(length))
     }
 
     private fun sendJson(o: JSONObject) = write(PhoneFrameKind.JSON, o.toString().toByteArray(Charsets.UTF_8))

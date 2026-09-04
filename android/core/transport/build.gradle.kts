@@ -20,9 +20,19 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests {
+            // PhoneClient touches android.util.Log; let the stubs no-op so the socket
+            // behaviour can be tested on the JVM.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
     implementation(project(":core:protocol"))
     testImplementation(libs.junit)
+    // Real org.json for unit tests; the android.jar stub throws.
+    testImplementation("org.json:json:20240303")
 }

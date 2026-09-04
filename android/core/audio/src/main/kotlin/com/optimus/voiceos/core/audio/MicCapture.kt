@@ -22,10 +22,12 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
         const val SAMPLE_RATE = 16000
         /** 20 ms at 16 kHz mono PCM16. */
         const val CHUNK_BYTES = 640
+        const val JOIN_TIMEOUT_MS = 500L
     }
 
     private val running = AtomicBoolean(false)
     private var record: AudioRecord? = null
+    private var captureThread: Thread? = null
 
     val isRecording: Boolean get() = running.get()
 
@@ -70,7 +72,7 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
         running.set(true)
         r.startRecording()
 
-        thread(name = "mic-capture", isDaemon = true) {
+        captureThread = thread(name = "mic-capture", isDaemon = true) {
             val buffer = ByteArray(CHUNK_BYTES)
             while (running.get()) {
                 val read = r.read(buffer, 0, buffer.size)
@@ -86,16 +88,46 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
         return true
     }
 
+    /**
+     * Stops recording and waits for the capture loop to finish.
+     *
+     * The join is the point. Without it `stop()` returned while the capture thread was still
+     * inside `read()` or about to deliver one more chunk, so a caller that stopped and then sent
+     * a stopCapture message could still emit audio after it — the PC would attribute those bytes
+     * to the wrong utterance. Returning only once the loop has exited makes "no audio after
+     * stop" a property of this method rather than a timing accident.
+     *
+     * `AudioRecord.stop()` runs first so a blocked `read()` returns promptly, and `release()`
+     * runs only after the join so the loop never touches a released recorder.
+     */
     fun stop() {
         if (!running.getAndSet(false)) return
 
         val r = record
         record = null
+
         try {
             r?.stop()
         } catch (e: IllegalStateException) {
             Log.w(TAG, "stop failed", e)
         }
+
+        val t = captureThread
+        captureThread = null
+        if (t != null && t !== Thread.currentThread()) {
+            try {
+                // Bounded: a 20 ms read cannot outlast this, and stop() is called from the UI
+                // thread, which must not hang if the driver misbehaves.
+                t.join(JOIN_TIMEOUT_MS)
+                if (t.isAlive) {
+                    Log.w(TAG, "capture thread did not finish within ${JOIN_TIMEOUT_MS} ms")
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                Log.w(TAG, "interrupted while stopping capture", e)
+            }
+        }
+
         r?.release()
     }
 }
