@@ -40,6 +40,42 @@ public static class ModelLocator
             ? custom
             : @"D:\SamHaydenVoiceTool\runtimes\llama.cpp\llama-server.exe";
 
+    /// <summary>
+    /// The voice selected by the S006 measurement on this machine, confirmed by listening.
+    /// Override with <c>OPTIMUS_TTS_VOICE</c>.
+    /// </summary>
+    /// <remarks>
+    /// Measured warm time-to-first-audio 257 ms median and real-time factor 0.149, the fastest
+    /// of every candidate. Kokoro voices scored better on depth and intelligibility but missed
+    /// the 250 ms first-audio target by roughly four times on this CPU path.
+    /// </remarks>
+    public static string TtsVoiceModel =>
+        Environment.GetEnvironmentVariable("OPTIMUS_TTS_VOICE") is { Length: > 0 } custom
+            ? custom
+            : Path.Combine(Root, "piper-voices", "en_GB-northern_english_male-medium.onnx");
+
+    /// <summary>Piper binary. Override with <c>OPTIMUS_PIPER</c>.</summary>
+    public static string PiperExecutable =>
+        Environment.GetEnvironmentVariable("OPTIMUS_PIPER") is { Length: > 0 } custom
+            ? custom
+            : @"D:\SamHaydenVoiceTool\runtimes\piper\piper.exe";
+
+    public static bool TtsAvailable =>
+        File.Exists(TtsVoiceModel) &&
+        File.Exists(TtsVoiceModel + ".json") &&
+        File.Exists(PiperExecutable);
+
+    public static void RequireTts()
+    {
+        foreach (string path in new[] { PiperExecutable, TtsVoiceModel, TtsVoiceModel + ".json" })
+        {
+            if (!File.Exists(path))
+            {
+                throw new FileNotFoundException($"Text-to-speech file is missing: {path}", path);
+            }
+        }
+    }
+
     public static bool ParakeetAvailable =>
         File.Exists(ParakeetEncoder) &&
         File.Exists(ParakeetDecoder) &&
