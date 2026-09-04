@@ -7,7 +7,8 @@ import java.io.OutputStream
 /** What a frame carries. Must match the PC's `PhoneFrameKind`. */
 enum class PhoneFrameKind(val id: Byte) {
     JSON(1),
-    AUDIO(2);
+    AUDIO(2),
+    TTS_AUDIO(3);
 
     companion object {
         fun fromId(id: Byte): PhoneFrameKind? = entries.firstOrNull { it.id == id }

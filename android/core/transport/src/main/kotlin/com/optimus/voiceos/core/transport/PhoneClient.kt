@@ -4,6 +4,8 @@ import android.util.Log
 import com.optimus.voiceos.core.protocol.PhoneFrame
 import com.optimus.voiceos.core.protocol.PhoneFrameKind
 import com.optimus.voiceos.core.protocol.PhoneFraming
+import com.optimus.voiceos.core.protocol.TtsAudioCodec
+import com.optimus.voiceos.core.protocol.TtsAudioSegment
 import org.json.JSONObject
 import java.io.OutputStream
 import java.net.InetSocketAddress
@@ -26,6 +28,9 @@ sealed interface PcEvent {
     data class Destinations(val destinations: List<PcDestination>) : PcEvent
     data class SendOutcome(val ok: Boolean, val destination: String, val detail: String) : PcEvent
     data class Failure(val message: String) : PcEvent
+    data class TtsAudio(val segment: TtsAudioSegment) : PcEvent
+    data class Playback(val generation: Long, val state: String) : PcEvent
+    data class Chime(val generation: Long) : PcEvent
 }
 
 /**
@@ -94,8 +99,15 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
         try {
             while (running.get()) {
                 val frame: PhoneFrame = PhoneFraming.read(input) ?: break
-                if (frame.kind != PhoneFrameKind.JSON) continue
-                dispatch(String(frame.payload, Charsets.UTF_8))
+                when (frame.kind) {
+                    PhoneFrameKind.JSON -> dispatch(String(frame.payload, Charsets.UTF_8))
+                    PhoneFrameKind.TTS_AUDIO -> try {
+                        onEvent(PcEvent.TtsAudio(TtsAudioCodec.decode(frame.payload)))
+                    } catch (e: IllegalArgumentException) {
+                        onEvent(PcEvent.Failure(e.message ?: "Invalid TTS audio"))
+                    }
+                    PhoneFrameKind.AUDIO -> Unit // PC never sends microphone audio back.
+                }
             }
         } catch (e: Exception) {
             reason = e.message ?: e.javaClass.simpleName
@@ -142,6 +154,8 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                     )
                 )
                 "error" -> onEvent(PcEvent.Failure(o.optString("message")))
+                "playback" -> onEvent(PcEvent.Playback(o.optLong("generation"), o.optString("state")))
+                "chime" -> onEvent(PcEvent.Chime(o.optLong("generation")))
                 else -> Unit
             }
         } catch (e: Exception) {
@@ -166,6 +180,10 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
     )
 
     fun cancel() = sendJson(JSONObject().put("t", "cancel"))
+
+    fun playbackDrained(generation: Long) = sendJson(
+        JSONObject().put("t", "playbackDrained").put("generation", generation)
+    )
 
     /**
      * Queues 16 kHz mono PCM16, exactly the format the PC pipeline expects.

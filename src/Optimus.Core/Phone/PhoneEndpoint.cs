@@ -53,6 +53,12 @@ public sealed class PhoneAudioEventArgs : EventArgs
     public byte[] Pcm { get; }
 }
 
+public sealed class PhonePlaybackDrainedEventArgs : EventArgs
+{
+    public PhonePlaybackDrainedEventArgs(long generation) => Generation = generation;
+    public long Generation { get; }
+}
+
 /// <summary>
 /// One direct TCP endpoint the phone connects to over LAN or Tailscale.
 /// </summary>
@@ -118,6 +124,9 @@ public sealed class PhoneEndpoint : IDisposable
 
     /// <summary>The phone discarded the draft.</summary>
     public event EventHandler? CancelRequested;
+
+    /// <summary>The phone has played every PCM frame for this generation.</summary>
+    public event EventHandler<PhonePlaybackDrainedEventArgs>? PlaybackDrained;
 
     public void Start()
     {
@@ -274,8 +283,28 @@ public sealed class PhoneEndpoint : IDisposable
                 CancelRequested?.Invoke(this, EventArgs.Empty);
                 break;
 
+            case "playbackDrained":
+                RaisePlaybackDrained(json);
+                break;
+
             default:
                 break;
+        }
+    }
+
+    private void RaisePlaybackDrained(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("generation", out JsonElement value) &&
+                value.TryGetInt64(out long generation) && generation >= 0)
+            {
+                PlaybackDrained?.Invoke(this, new PhonePlaybackDrainedEventArgs(generation));
+            }
+        }
+        catch (JsonException)
+        {
         }
     }
 
@@ -326,6 +355,21 @@ public sealed class PhoneEndpoint : IDisposable
 
     public void SendError(string message) =>
         SendJson(new { t = "error", message });
+
+    public void SendPlaybackStart(long generation) =>
+        SendJson(new { t = "playback", generation, state = "start" });
+
+    public void SendPlaybackEnd(long generation) =>
+        SendJson(new { t = "playback", generation, state = "end" });
+
+    public void CancelPlayback(long generation) =>
+        SendJson(new { t = "playback", generation, state = "cancel" });
+
+    public void SendPlaybackChime(long generation) =>
+        SendJson(new { t = "chime", generation });
+
+    public void SendTtsAudio(PhoneTtsAudioSegment segment) =>
+        Send(PhoneFrameKind.TtsAudio, PhoneTtsAudio.Encode(segment));
 
     private void SendJson(object payload)
     {

@@ -3,6 +3,7 @@ package com.optimus.voiceos.feature.talk
 import android.os.Handler
 import android.os.Looper
 import com.optimus.voiceos.core.audio.MicCapture
+import com.optimus.voiceos.core.audio.TtsAudioPlayer
 import com.optimus.voiceos.core.transport.PcEvent
 import com.optimus.voiceos.core.transport.PhoneClient
 
@@ -23,6 +24,17 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         // Straight out to the PC; nothing is accumulated on the phone.
         client.sendAudio(pcm, length)
     }
+
+    private val player = TtsAudioPlayer(
+        onActiveChanged = { active -> main.post {
+            if (active) {
+                mic.stop()
+                update { it.copy(capturing = false, status = "Speaking...") }
+            }
+        } },
+        onDrained = client::playbackDrained,
+        onFailure = { message -> main.post { update { it.copy(error = message, status = "Playback failed") } } }
+    )
 
     fun currentState(): TalkUiState = state
 
@@ -101,6 +113,10 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 
     fun startCapture() {
+        if (player.isActive) {
+            update { it.copy(error = "Wait for speech playback to finish") }
+            return
+        }
         if (!client.isConnected) {
             update { it.copy(error = "Not connected") }
             return
@@ -177,6 +193,14 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             }
 
             is PcEvent.Failure -> update { it.copy(error = event.message) }
+
+            is PcEvent.TtsAudio -> player.enqueue(event.segment)
+            is PcEvent.Playback -> when (event.state) {
+                "start" -> player.start(event.generation)
+                "end" -> player.finish(event.generation)
+                "cancel" -> player.cancel(event.generation)
+            }
+            is PcEvent.Chime -> player.chime(event.generation)
         }
     }
 
@@ -187,6 +211,7 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     fun dispose() {
         mic.stop()
+        player.close()
         client.disconnect()
     }
 }

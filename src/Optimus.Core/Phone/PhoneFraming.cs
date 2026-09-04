@@ -10,7 +10,8 @@ using System.Threading.Tasks;
 public enum PhoneFrameKind : byte
 {
     Json = 1,
-    Audio = 2
+    Audio = 2,
+    TtsAudio = 3
 }
 
 /// <summary>
@@ -56,7 +57,7 @@ public static class PhoneFraming
         }
 
         var kind = (PhoneFrameKind)header[0];
-        if (kind is not (PhoneFrameKind.Json or PhoneFrameKind.Audio))
+        if (kind is not (PhoneFrameKind.Json or PhoneFrameKind.Audio or PhoneFrameKind.TtsAudio))
         {
             throw new InvalidDataException($"Unknown frame kind {header[0]}.");
         }
