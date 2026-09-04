@@ -6,8 +6,9 @@
         xmlns:vm="clr-namespace:Optimus.Shell.ViewModels"
         mc:Ignorable="d"
         Title="Optimus Voice OS"
-        Height="150"
-        Width="380"
+        MinHeight="150"
+        SizeToContent="Height"
+        Width="420"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -102,6 +103,57 @@
                            TextWrapping="Wrap"
                            MaxHeight="40"
                            TextTrimming="CharacterEllipsis" />
+
+                <!-- Raw transcript, exactly as the speech model produced it -->
+                <StackPanel Visibility="{Binding HasRawTranscript, Converter={StaticResource BoolToVis}}"
+                            Margin="0,8,0,0">
+                    <TextBlock Text="RAW TRANSCRIPT"
+                               FontSize="9"
+                               FontWeight="SemiBold"
+                               Foreground="#636366"
+                               Margin="0,0,0,2" />
+                    <Border Background="#16161B"
+                            CornerRadius="6"
+                            Padding="8,5">
+                        <TextBlock Text="{Binding RawTranscript}"
+                                   FontSize="11"
+                                   Foreground="#8E8E93"
+                                   TextWrapping="Wrap"
+                                   MaxHeight="70" />
+                    </Border>
+                </StackPanel>
+
+                <!-- Cleaned draft, editable before confirmation -->
+                <StackPanel Visibility="{Binding IsConfirming, Converter={StaticResource BoolToVis}}"
+                            Margin="0,8,0,0">
+                    <TextBlock Text="CLEANED DRAFT (editable)"
+                               FontSize="9"
+                               FontWeight="SemiBold"
+                               Foreground="#636366"
+                               Margin="0,0,0,2" />
+                    <TextBox Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}"
+                             FontSize="13"
+                             Foreground="#FFFFFF"
+                             Background="#2C2C34"
+                             BorderBrush="#0A84FF"
+                             BorderThickness="1"
+                             Padding="8,5"
+                             MinHeight="46"
+                             MaxHeight="120"
+                             TextWrapping="Wrap"
+                             AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto"
+                             CaretBrush="#FFFFFF" />
+                </StackPanel>
+
+                <!-- Per-stage latency -->
+                <TextBlock Visibility="{Binding HasStageTimings, Converter={StaticResource BoolToVis}}"
+                           Text="{Binding StageTimings}"
+                           FontSize="10"
+                           FontFamily="Consolas"
+                           Foreground="#5E9EFF"
+                           Margin="0,6,0,0"
+                           TextWrapping="Wrap" />
 
                 <!-- Error panel if error state -->
                 <Border Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}"

@@ -7,5 +7,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Optimus.Contracts\Optimus.Contracts.csproj" />
     <ProjectReference Include="..\Optimus.Core\Optimus.Core.csproj" />
+    <ProjectReference Include="..\Optimus.Inference\Optimus.Inference.csproj" />
   </ItemGroup>
 </Project>

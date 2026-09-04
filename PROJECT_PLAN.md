@@ -134,7 +134,10 @@ No QR pairing, TLS pinning, custom certificates, device identity, challenge/resp
 Do not build a multi-engine model platform before the application works.
 
 - STT: integrate one Parakeet 0.6B English model first and measure it on the RTX 4070.
-- Cleanup: integrate one quantized Qwen3.5 0.8B instruct model first with a strict cleanup prompt.
+- Cleanup: integrate one quantized Gemma 4 E2B instruct model with a strict cleanup prompt.
+  Chosen over Qwen3.5 0.8B during S002 on measured behavior, at the user's direction: both are
+  reasoning models, but with few-shot prompting Gemma 4 returns a clean one-line rewrite in
+  ~15 tokens, while Qwen3.5 spent its whole token budget reasoning and returned no text.
 - If a model fails to load or run, show an error. Do not silently switch to another engine.
 - After the full PC and phone flows work, compare at most one serious alternative per stage on 20–30 real coding utterances. Replace the initial choice only if measured results are materially better.
 

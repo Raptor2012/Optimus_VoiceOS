@@ -8,7 +8,7 @@ using Optimus.Core.Audio.Wasapi;
 
 /// <summary>
 /// In-memory audio capture using Windows WASAPI (CoreAudio).
-/// Captures from the default Windows microphone and resamples to 16kHz mono PCM16.
+/// Captures from the default Windows microphone and resamples to 16 kHz mono PCM16.
 /// Audio is kept strictly in-memory and never written to disk.
 /// </summary>
 public sealed class WasapiAudioCapture : IAudioCaptureService
@@ -21,23 +21,30 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
     private IAudioClient? _audioClient;
     private IAudioCaptureClient? _captureClient;
     private IntPtr _mixFormatPtr = IntPtr.Zero;
-    private int _sampleRate = 48000;
-    private int _channels = 2;
-    private int _bitsPerSample = 32;
-    private bool _isFloat = true;
-    private bool _isCapturing;
+    private WaveFormatInfo _format = new(48000, 2, 32, WaveSampleFormat.Float32);
+    private volatile bool _isCapturing;
     private bool _disposed;
 
-    public bool IsCapturing
+    public bool IsCapturing => _isCapturing;
+
+    /// <summary>The device mix format of the most recent capture, for diagnostics.</summary>
+    public string LastCaptureFormatDescription
     {
         get
         {
             lock (_lock)
             {
-                return _isCapturing;
+                return _format.ToString();
             }
         }
     }
+
+    /// <summary>Packet accounting for the most recent capture, for diagnostics.</summary>
+    public int LastPacketsAcquired { get; private set; }
+
+    public int LastPacketsReleased { get; private set; }
+
+    public int LastSilentPackets { get; private set; }
 
     public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
@@ -58,6 +65,9 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
                 InitializeWasapi();
                 _inMemoryBuffer = new MemoryStream();
                 _stopSignal = new ManualResetEventSlim(false);
+                LastPacketsAcquired = 0;
+                LastPacketsReleased = 0;
+                LastSilentPackets = 0;
                 _isCapturing = true;
 
                 _captureThread = new Thread(CaptureLoop)
@@ -78,9 +88,14 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
         }
     }
 
+    /// <summary>
+    /// Stops capture and returns the utterance as 16 kHz mono PCM16, the only format this
+    /// method ever returns.
+    /// </summary>
     public byte[] StopCapture()
     {
         MemoryStream? bufferToProcess;
+        WaveFormatInfo format;
 
         lock (_lock)
         {
@@ -93,15 +108,16 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             _stopSignal?.Set();
             bufferToProcess = _inMemoryBuffer;
             _inMemoryBuffer = null;
+            format = _format;
         }
 
         try
         {
             _captureThread?.Join(1000);
         }
-        catch
+        catch (ThreadStateException)
         {
-            // Thread join timeout or interruption
+            // Thread was never started; nothing to join.
         }
 
         lock (_lock)
@@ -120,26 +136,48 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
 
         try
         {
-            if (_isFloat)
-            {
-                int floatCount = rawBytes.Length / sizeof(float);
-                float[] floatSamples = new float[floatCount];
-                Buffer.BlockCopy(rawBytes, 0, floatSamples, 0, rawBytes.Length);
-                return AudioResampler.ResampleFloatToPcm16Mono(floatSamples, _sampleRate, _channels);
-            }
-            else if (_bitsPerSample == 16)
-            {
-                return AudioResampler.ResamplePcm16ToPcm16Mono(rawBytes, _sampleRate, _channels);
-            }
-            else
-            {
-                return rawBytes;
-            }
+            return ConvertToTargetPcm(rawBytes, format);
         }
         catch (Exception ex)
         {
             ErrorOccurred?.Invoke(this, new CaptureErrorEventArgs($"Audio resampling failed: {ex.Message}", ex));
             return Array.Empty<byte>();
+        }
+    }
+
+    /// <summary>
+    /// Converts a raw device-format buffer to 16 kHz mono PCM16. Both supported device
+    /// formats funnel through <see cref="AudioResampler"/>, so the return value is canonical
+    /// regardless of what the endpoint delivered.
+    /// </summary>
+    internal static byte[] ConvertToTargetPcm(byte[] rawBytes, WaveFormatInfo format)
+    {
+        ArgumentNullException.ThrowIfNull(rawBytes);
+        ArgumentNullException.ThrowIfNull(format);
+
+        if (rawBytes.Length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        switch (format.SampleFormat)
+        {
+            case WaveSampleFormat.Float32:
+                int floatCount = rawBytes.Length / sizeof(float);
+                if (floatCount == 0)
+                {
+                    return Array.Empty<byte>();
+                }
+
+                float[] floatSamples = new float[floatCount];
+                Buffer.BlockCopy(rawBytes, 0, floatSamples, 0, floatCount * sizeof(float));
+                return AudioResampler.ResampleFloatToPcm16Mono(floatSamples, format.SampleRate, format.Channels);
+
+            case WaveSampleFormat.Pcm16:
+                return AudioResampler.ResamplePcm16ToPcm16Mono(rawBytes, format.SampleRate, format.Channels);
+
+            default:
+                throw new NotSupportedException($"Unsupported capture sample format {format.SampleFormat}.");
         }
     }
 
@@ -169,7 +207,7 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             throw new InvalidOperationException($"Failed to obtain device mix format (HRESULT: 0x{hr:X8}).");
         }
 
-        ParseWaveFormat(_mixFormatPtr);
+        _format = WaveFormatParser.Parse(ReadMixFormatBlob(_mixFormatPtr));
 
         long bufferDurationHns = 10_000_000; // 1 second buffer in 100ns units
         Guid emptySession = Guid.Empty;
@@ -209,26 +247,24 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
         }
     }
 
-    private void ParseWaveFormat(IntPtr formatPtr)
+    /// <summary>
+    /// Copies the variable-length mix-format blob out of unmanaged memory. Its total size is
+    /// the fixed 18-byte header plus the <c>cbSize</c> the header declares.
+    /// </summary>
+    private static byte[] ReadMixFormatBlob(IntPtr formatPtr)
     {
-        var waveFormat = Marshal.PtrToStructure<WAVEFORMATEX>(formatPtr);
-        _sampleRate = (int)waveFormat.nSamplesPerSec;
-        _channels = waveFormat.nChannels;
-        _bitsPerSample = waveFormat.wBitsPerSample;
+        byte[] header = new byte[WaveFormatSizes.WaveFormatEx];
+        Marshal.Copy(formatPtr, header, 0, header.Length);
 
-        if (waveFormat.wFormatTag == 3 /* WAVE_FORMAT_IEEE_FLOAT */)
+        ushort cbSize = BitConverter.ToUInt16(header, WaveFormatSizes.WaveFormatEx - sizeof(ushort));
+        if (cbSize == 0)
         {
-            _isFloat = true;
+            return header;
         }
-        else if (waveFormat.wFormatTag == 0xFFFE /* WAVE_FORMAT_EXTENSIBLE */)
-        {
-            var ext = Marshal.PtrToStructure<WAVEFORMATEXTENSIBLE>(formatPtr);
-            _isFloat = ext.SubFormat == WasapiGuids.KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
-        }
-        else
-        {
-            _isFloat = false;
-        }
+
+        byte[] full = new byte[WaveFormatSizes.WaveFormatEx + cbSize];
+        Marshal.Copy(formatPtr, full, 0, full.Length);
+        return full;
     }
 
     private void CaptureLoop()
@@ -253,49 +289,37 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
 
     private void ReadAvailablePackets()
     {
-        if (_captureClient == null || _inMemoryBuffer == null)
+        IAudioCaptureClient? client = _captureClient;
+        if (client == null)
         {
             return;
         }
 
-        while (true)
+        try
         {
-            int hr = _captureClient.GetNextPacketSize(out uint packetFrames);
-            if (hr != 0 || packetFrames == 0)
-            {
-                break;
-            }
-
-            hr = _captureClient.GetBuffer(out IntPtr dataPtr, out uint framesRead, out uint flags, out _, out _);
-            if (hr != 0 || dataPtr == IntPtr.Zero || framesRead == 0)
-            {
-                break;
-            }
-
-            try
-            {
-                int bytesPerFrame = _channels * (_bitsPerSample / 8);
-                int byteCount = (int)framesRead * bytesPerFrame;
-                byte[] tempBuffer = new byte[byteCount];
-
-                if ((flags & 0x01 /* AUDCLNT_BUFFERFLAGS_SILENT */) != 0)
+            var source = new AudioCaptureClientSource(client);
+            PacketDrainResult drain = WasapiPacketReader.Drain(
+                source,
+                _format.BytesPerFrame,
+                (buffer, count) =>
                 {
-                    Array.Clear(tempBuffer, 0, tempBuffer.Length);
-                }
-                else
-                {
-                    Marshal.Copy(dataPtr, tempBuffer, 0, byteCount);
-                }
+                    lock (_lock)
+                    {
+                        _inMemoryBuffer?.Write(buffer, 0, count);
+                    }
+                });
 
-                lock (_lock)
-                {
-                    _inMemoryBuffer?.Write(tempBuffer, 0, tempBuffer.Length);
-                }
-            }
-            finally
-            {
-                _captureClient.ReleaseBuffer(framesRead);
-            }
+            LastPacketsAcquired += drain.PacketsAcquired;
+            LastPacketsReleased += drain.PacketsReleased;
+            LastSilentPackets += drain.SilentPackets;
+        }
+        catch (COMException ex)
+        {
+            ErrorOccurred?.Invoke(this, new CaptureErrorEventArgs($"Audio packet read failed: {ex.Message}", ex));
+        }
+        catch (InvalidCastException ex)
+        {
+            ErrorOccurred?.Invoke(this, new CaptureErrorEventArgs($"Audio packet read failed: {ex.Message}", ex));
         }
     }
 
@@ -305,9 +329,13 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
         {
             _audioClient?.Stop();
         }
-        catch
+        catch (InvalidCastException)
         {
-            // Ignore on cleanup
+            // COM object already torn down.
+        }
+        catch (COMException)
+        {
+            // Endpoint already gone.
         }
 
         _captureClient = null;
@@ -344,9 +372,13 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             _stopSignal?.Set();
             _captureThread?.Join(500);
         }
-        catch
+        catch (ThreadStateException)
         {
-            // Ignore
+            // Never started.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Signal already disposed.
         }
 
         lock (_lock)
@@ -355,5 +387,21 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             _inMemoryBuffer = null;
             CleanupWasapiResources();
         }
+    }
+
+    /// <summary>Adapts the COM capture client to the drain loop's narrow interface.</summary>
+    private sealed class AudioCaptureClientSource : IWasapiPacketSource
+    {
+        private readonly IAudioCaptureClient _client;
+
+        public AudioCaptureClientSource(IAudioCaptureClient client) => _client = client;
+
+        public int GetNextPacketSize(out uint framesInNextPacket) =>
+            _client.GetNextPacketSize(out framesInNextPacket);
+
+        public int GetBuffer(out IntPtr data, out uint framesRead, out uint flags) =>
+            _client.GetBuffer(out data, out framesRead, out flags, out _, out _);
+
+        public int ReleaseBuffer(uint framesRead) => _client.ReleaseBuffer(framesRead);
     }
 }

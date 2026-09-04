@@ -2,9 +2,11 @@ namespace Optimus.Shell;
 
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using Optimus.Core.Audio;
 using Optimus.Core.Hotkeys;
+using Optimus.Inference;
 using Optimus.Shell.ViewModels;
 
 /// <summary>
@@ -17,6 +19,7 @@ public partial class App : Application
     private IHotkeyService? _hotkeyService;
     private PushToTalkController? _controller;
     private WidgetViewModel? _viewModel;
+    private VoicePipeline? _pipeline;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -37,6 +40,36 @@ public partial class App : Application
         _viewModel = new WidgetViewModel();
         _viewModel.AttachController(_controller);
 
+        // --no-models runs capture only, for testing the widget without loading ~3.8 GB.
+        if (!e.Args.Contains("--no-models"))
+        {
+            _pipeline = new VoicePipeline();
+            _viewModel.AttachPipeline(_pipeline);
+
+            WidgetViewModel viewModel = _viewModel;
+            VoicePipeline pipeline = _pipeline;
+            viewModel.StatusLine = "Loading speech and cleanup models...";
+
+            // Warm both models off the UI thread so the first utterance is not the slow one.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    pipeline.Warmup();
+                    Dispatcher.Invoke(() => viewModel.StatusLine = $"Ready — Hold {viewModel.HotkeyLabel} to speak");
+                }
+                catch (Exception ex)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        viewModel.ErrorMessage = $"Model load failed: {ex.Message}";
+                        viewModel.State = Models.WidgetState.Error;
+                        viewModel.StatusLine = "Models unavailable";
+                    });
+                }
+            });
+        }
+
         _controller.Start();
 
         var mainWindow = new MainWindow(_viewModel);
@@ -47,6 +80,7 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _viewModel?.Dispose();
+        _pipeline?.Dispose();
         _controller?.Dispose();
         _hotkeyService?.Dispose();
         _audioCaptureService?.Dispose();

@@ -6,5 +6,7 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- S002: Parakeet 0.6B STT via sherpa-onnx. Gemma 4 cleanup runs out of process (llama-server). -->
+    <PackageVersion Include="org.k2fsa.sherpa.onnx" Version="1.13.5" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,113 @@
+namespace Optimus.Inference;
+
+using System;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
+
+/// <summary>
+/// Captured audio to visible draft: Parakeet transcription, then Qwen cleanup, with a stage
+/// timing for each.
+/// </summary>
+public sealed class VoicePipeline : IDisposable
+{
+    private readonly ISpeechTranscriber _transcriber;
+    private readonly IPromptCleaner _cleaner;
+    private readonly bool _ownsDependencies;
+    private bool _disposed;
+
+    public VoicePipeline()
+        : this(new ParakeetTranscriber(), new GemmaPromptCleaner(), ownsDependencies: true)
+    {
+    }
+
+    public VoicePipeline(ISpeechTranscriber transcriber, IPromptCleaner cleaner, bool ownsDependencies = false)
+    {
+        _transcriber = transcriber ?? throw new ArgumentNullException(nameof(transcriber));
+        _cleaner = cleaner ?? throw new ArgumentNullException(nameof(cleaner));
+        _ownsDependencies = ownsDependencies;
+    }
+
+    public bool IsWarm => _transcriber.IsLoaded && _cleaner.IsLoaded;
+
+    /// <summary>Loads both models so the first utterance does not pay for it.</summary>
+    public void Warmup()
+    {
+        _transcriber.EnsureLoaded();
+        _cleaner.EnsureLoaded();
+    }
+
+    /// <summary>
+    /// Runs one utterance through both stages. A cleanup failure degrades to the raw
+    /// transcript rather than failing the utterance; the user still confirms explicitly.
+    /// </summary>
+    public async Task<VoicePipelineResult> ProcessAsync(
+        byte[] pcm16Mono16k,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(pcm16Mono16k);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        var total = Stopwatch.StartNew();
+
+        TranscriptionResult transcription = _transcriber.Transcribe(pcm16Mono16k, cancellationToken);
+
+        if (transcription.IsEmpty)
+        {
+            total.Stop();
+            return new VoicePipelineResult(
+                RawTranscript: string.Empty,
+                CleanedDraft: string.Empty,
+                TranscribeMilliseconds: transcription.ElapsedMilliseconds,
+                CleanupMilliseconds: 0,
+                TotalMilliseconds: total.ElapsedMilliseconds,
+                AudioSeconds: transcription.AudioSeconds,
+                CleanupApplied: false,
+                CleanupUnavailableReason: "No speech detected");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        CleanupResult cleanup;
+        try
+        {
+            cleanup = await _cleaner.CleanAsync(transcription.Text, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            cleanup = new CleanupResult(transcription.Text, 0, Applied: false, ex.Message);
+        }
+
+        total.Stop();
+
+        return new VoicePipelineResult(
+            RawTranscript: transcription.Text,
+            CleanedDraft: cleanup.Text,
+            TranscribeMilliseconds: transcription.ElapsedMilliseconds,
+            CleanupMilliseconds: cleanup.ElapsedMilliseconds,
+            TotalMilliseconds: total.ElapsedMilliseconds,
+            AudioSeconds: transcription.AudioSeconds,
+            CleanupApplied: cleanup.Applied,
+            CleanupUnavailableReason: cleanup.UnavailableReason);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        if (_ownsDependencies)
+        {
+            _transcriber.Dispose();
+            _cleaner.Dispose();
+        }
+    }
+}

@@ -2,6 +2,7 @@
 
 - Status: Active
 - Owner: User
+- Current implementer: Claude Opus 5 while Gemini's five-hour allocation recovers
 - Product plan: `PROJECT_PLAN.md`
 
 This backlog supersedes the original T003–T029 release plan. Each slice must end with something runnable or directly testable by the user. Do not add speculative protocols, security systems, fallback layers, or generalized frameworks.
@@ -29,6 +30,8 @@ Done when the Windows and Android scaffolds build, `rg --files -g "*.md"` return
 
 Owner: Gemini
 
+Status: Implemented at `8ddb0a9`; the real-device WASAPI format/release correction is folded into S002.
+
 Build a runnable WPF app with a configurable hold-to-talk hotkey, in-memory WASAPI capture, and a tiny floating widget.
 
 Done when:
@@ -41,9 +44,13 @@ Done when:
 
 ## S002 — Local STT and cleanup
 
-Owner: Gemini; Opus only for a real runtime/GPU blocker
+Owner: Claude Opus 5
 
-Connect captured audio to one Parakeet 0.6B English runtime. Display the raw transcript, then run one local Qwen3.5 0.8B cleanup pass. Allow editing and cancellation.
+Connect captured audio to one Parakeet 0.6B English runtime. Display the raw transcript, then run one local Gemma 4 E2B cleanup pass. Allow editing and cancellation.
+
+Status: WASAPI repair and both runtimes implemented; widget shows raw transcript, editable cleaned draft, and stage timings. Cleanup model switched from Qwen3.5 0.8B to Gemma 4 E2B at the user's direction during the slice, on measured behavior (`PROJECT_PLAN.md`, "Initial local models"). Remaining before this slice is done: the ten-real-prompt dogfood run, which needs a working microphone.
+
+Before model integration, repair the S001 WASAPI interop blocker: give `WAVEFORMATEX`/`WAVEFORMATEXTENSIBLE` their native layout, correctly recognize extensible float/PCM input, always release every successfully acquired non-empty WASAPI packet, and prove the returned buffer is 16 kHz mono PCM16. Continue directly into S002 after this focused repair; do not create a separate design or review cycle.
 
 Done when ten real coding prompts produce visible drafts, stage timings are logged, and the confirmed snapshot exactly matches what is shown.
 
@@ -51,7 +58,7 @@ Do not implement alternate engines, automatic fallbacks, a model marketplace, GP
 
 ## S003 — Windows destination adapters
 
-Owner: Gemini
+Owner: Claude Opus 5
 
 Let the user bind destination cards to exact open Claude, Antigravity, and Codex Windows application targets. Implement focus, insertion, and submit through the tiny adapter interface.
 
@@ -64,7 +71,7 @@ Done when:
 
 ## S004 — Minimal PC-to-phone connection
 
-Owner: Gemini; Opus only if a concrete transport blocker appears
+Owner: Claude Opus 5
 
 Add one direct PC endpoint for the Pixel app over private LAN/Tailscale. Use a tiny current-version JSON/audio message set. Keep connection state in memory and use simple reconnect behavior.
 
@@ -80,7 +87,7 @@ Explicitly forbidden in this slice:
 
 ## S005 — Pixel 9a UI and confirmation
 
-Owner: Gemini
+Owner: Claude Opus 5
 
 Build the small Jetpack Compose phone UI: push-to-talk, transcript/cleaned draft, explicit destination, edit, confirm, cancel, status, and final summary.
 
@@ -88,7 +95,7 @@ Done when ten phone-originated prompts are processed on the PC and sent to the e
 
 ## S006 — Dogfood and measured latency fixes
 
-Owner: Gemini for normal fixes; Opus for one identified hard architectural bottleneck; Sol reviews only blockers
+Owner: Claude Opus 5; Sol reviews only blockers
 
 Use the app during real coding from both Windows and Pixel. Record simple timestamps, fix the largest measured delays, and remove friction discovered in use.
 

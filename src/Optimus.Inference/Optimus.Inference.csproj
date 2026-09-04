@@ -5,4 +5,10 @@
   <ItemGroup>
     <ProjectReference Include="..\Optimus.Contracts\Optimus.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="org.k2fsa.sherpa.onnx" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Optimus.Inference.Tests" />
+  </ItemGroup>
 </Project>

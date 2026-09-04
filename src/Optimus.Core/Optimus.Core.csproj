@@ -7,4 +7,8 @@
     <ProjectReference Include="..\Optimus.Inference\Optimus.Inference.csproj" />
     <ProjectReference Include="..\Optimus.Providers\Optimus.Providers.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The WASAPI interop structs and the packet-drain loop are unit tested directly. -->
+    <InternalsVisibleTo Include="Optimus.Core.Tests" />
+  </ItemGroup>
 </Project>

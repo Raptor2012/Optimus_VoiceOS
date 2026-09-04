@@ -35,7 +35,13 @@ internal enum AudclntShareMode
     Exclusive = 1
 }
 
-[StructLayout(LayoutKind.Sequential)]
+/// <summary>
+/// Native <c>WAVEFORMATEX</c> from mmreg.h, which declares it under
+/// <c>#include &lt;pshpack1.h&gt;</c>: exactly 18 bytes, no tail padding. Without
+/// <c>Pack = 1</c> the CLR applies natural alignment and produces 20 bytes, which
+/// shifts every field of the extensible form that follows it.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct WAVEFORMATEX
 {
     public ushort wFormatTag;
@@ -47,13 +53,59 @@ internal struct WAVEFORMATEX
     public ushort cbSize;
 }
 
-[StructLayout(LayoutKind.Sequential)]
+/// <summary>
+/// Native <c>WAVEFORMATEXTENSIBLE</c>: 18 + 2 + 4 + 16 = 40 bytes, with
+/// <c>SubFormat</c> at offset 24. Under default packing the CLR places
+/// <c>SubFormat</c> at offset 28 of a 44-byte struct, so the subformat GUID is read
+/// from the wrong bytes and every extensible format is misclassified as integer PCM.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 1)]
 internal struct WAVEFORMATEXTENSIBLE
 {
     public WAVEFORMATEX Format;
     public ushort wValidBitsPerSample;
     public uint dwChannelMask;
     public Guid SubFormat;
+}
+
+internal static class WaveFormatTag
+{
+    public const ushort Pcm = 0x0001;
+    public const ushort IeeeFloat = 0x0003;
+    public const ushort Extensible = 0xFFFE;
+}
+
+internal static class WaveFormatSizes
+{
+    /// <summary>Native <c>sizeof(WAVEFORMATEX)</c>.</summary>
+    public const int WaveFormatEx = 18;
+
+    /// <summary>Native <c>sizeof(WAVEFORMATEXTENSIBLE)</c>.</summary>
+    public const int WaveFormatExtensible = 40;
+
+    /// <summary>Byte offset of <c>SubFormat</c> inside <c>WAVEFORMATEXTENSIBLE</c>.</summary>
+    public const int SubFormatOffset = 24;
+
+    /// <summary>Minimum <c>cbSize</c> that makes the extensible tail readable.</summary>
+    public const int ExtensibleCbSize = 22;
+}
+
+/// <summary>HRESULT values returned by <c>IAudioCaptureClient</c>.</summary>
+internal static class AudclntHResults
+{
+    public const int SOk = 0;
+
+    /// <summary><c>AUDCLNT_S_BUFFER_EMPTY</c>: success, but no packet was acquired.</summary>
+    public const int SBufferEmpty = 0x08890001;
+}
+
+[Flags]
+internal enum AudclntBufferFlags : uint
+{
+    None = 0,
+    DataDiscontinuity = 0x1,
+    Silent = 0x2,
+    TimestampError = 0x4
 }
 
 [ComImport]
