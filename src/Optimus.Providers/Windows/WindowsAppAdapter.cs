@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Automation;
 
 /// <summary>
 /// Sends a confirmed draft to one bound Windows application window by focusing it and
@@ -67,6 +68,11 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
 
     /// <summary>Delay between focusing and typing. Raise if an app misses leading characters.</summary>
     public int FocusSettleMs { get; set; } = 120;
+
+    /// <summary>How many times to re-read the message box before deciding the text never landed.</summary>
+    private const int DeliveryCheckAttempts = 6;
+
+    private const int DeliveryCheckIntervalMs = 50;
 
     public DestinationStatus Probe()
     {
@@ -213,10 +219,34 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
                     stopwatch.ElapsedMilliseconds);
             }
 
+            // Focusing the window is not the same as focusing its message box. Typing into a
+            // focused list does type-ahead navigation instead, which moves the application
+            // somewhere the user did not ask to go and loses the prompt entirely.
+            if (!IsEditableElementFocused(target.ProcessId, out string focusDetail))
+            {
+                stopwatch.Stop();
+                return new SendResult(
+                    SendStatus.InputRejected,
+                    $"{DisplayName} is focused but its message box is not. Nothing was typed. {focusDetail}",
+                    stopwatch.ElapsedMilliseconds);
+            }
+
             if (!TypeText(draft.Text, target.Hwnd, target.ProcessId, out string typeDetail))
             {
                 stopwatch.Stop();
                 return new SendResult(SendStatus.InputRejected, typeDetail, stopwatch.ElapsedMilliseconds);
+            }
+
+            // Synthetic input being accepted by Windows says nothing about where it landed. The
+            // prompt is only submitted once the text is visible in the box that will receive it.
+            if (!FocusedElementContains(target.ProcessId, draft.Text))
+            {
+                stopwatch.Stop();
+                return new SendResult(
+                    SendStatus.InputRejected,
+                    $"The text did not reach {DisplayName}'s message box, so it was not submitted. "
+                        + "Click the message box once and confirm again.",
+                    stopwatch.ElapsedMilliseconds);
             }
 
             if (!IsTargetForeground(target.Hwnd, target.ProcessId))
@@ -388,6 +418,128 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
     /// Types the draft as Unicode keystrokes, keeping newlines as Shift+Enter so an embedded
     /// line break cannot submit the prompt early.
     /// </summary>
+    /// <summary>
+    /// True when the element with keyboard focus is a text box belonging to the target process.
+    /// </summary>
+    /// <remarks>
+    /// Checked before anything is typed. A focused list or button would turn the draft into
+    /// shortcut and type-ahead keystrokes, which is how a prompt disappears into a navigation
+    /// menu while the send still reports success.
+    /// </remarks>
+    private static bool IsEditableElementFocused(int expectedPid, out string detail)
+    {
+        try
+        {
+            AutomationElement? focused = AutomationElement.FocusedElement;
+            if (focused == null)
+            {
+                detail = "Nothing has keyboard focus.";
+                return false;
+            }
+
+            if (focused.Current.ProcessId != expectedPid)
+            {
+                detail = "Keyboard focus belongs to another application.";
+                return false;
+            }
+
+            if (focused.Current.IsPassword)
+            {
+                detail = "Keyboard focus is on a password field.";
+                return false;
+            }
+
+            ControlType type = focused.Current.ControlType;
+            bool editable =
+                Equals(type, ControlType.Edit) ||
+                Equals(type, ControlType.Document) ||
+                focused.TryGetCurrentPattern(TextPattern.Pattern, out _) ||
+                (focused.TryGetCurrentPattern(ValuePattern.Pattern, out object? value) &&
+                 value is ValuePattern pattern &&
+                 !pattern.Current.IsReadOnly);
+
+            detail = editable ? string.Empty : $"Focus is on a {type.ProgrammaticName} control.";
+            return editable;
+        }
+        catch (ElementNotAvailableException)
+        {
+            detail = "The focused element went away while it was being checked.";
+            return false;
+        }
+        catch (COMException)
+        {
+            detail = "The application did not answer an accessibility request.";
+            return false;
+        }
+    }
+
+    /// <summary>Confirms the typed draft is actually sitting in the focused text box.</summary>
+    /// <remarks>
+    /// Applications commit synthetic input asynchronously, so this retries briefly before
+    /// deciding the text never arrived.
+    /// </remarks>
+    private static bool FocusedElementContains(int expectedPid, string expected)
+    {
+        string needle = expected.Trim();
+        if (needle.Length == 0)
+        {
+            return true;
+        }
+
+        for (int attempt = 0; attempt < DeliveryCheckAttempts; attempt++)
+        {
+            if (attempt > 0)
+            {
+                Thread.Sleep(DeliveryCheckIntervalMs);
+            }
+
+            try
+            {
+                AutomationElement? focused = AutomationElement.FocusedElement;
+                if (focused == null || focused.Current.ProcessId != expectedPid)
+                {
+                    continue;
+                }
+
+                if (ReadElementText(focused) is { } actual &&
+                    actual.Contains(needle, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            catch (ElementNotAvailableException)
+            {
+                // The box was replaced mid-check; the next attempt reads the new one.
+            }
+            catch (COMException)
+            {
+            }
+        }
+
+        return false;
+    }
+
+    private static string? ReadElementText(AutomationElement element)
+    {
+        if (element.TryGetCurrentPattern(ValuePattern.Pattern, out object? value) &&
+            value is ValuePattern valuePattern)
+        {
+            string current = valuePattern.Current.Value ?? string.Empty;
+            if (current.Length > 0)
+            {
+                return current;
+            }
+        }
+
+        if (element.TryGetCurrentPattern(TextPattern.Pattern, out object? text) &&
+            text is TextPattern textPattern)
+        {
+            return textPattern.DocumentRange.GetText(-1);
+        }
+
+        return element.Current.Name;
+    }
+
     private bool TypeText(string text, IntPtr expectedForeground, int expectedPid, out string detail)
     {
         detail = string.Empty;
