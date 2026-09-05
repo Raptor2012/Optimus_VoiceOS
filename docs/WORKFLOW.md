@@ -28,8 +28,19 @@ Next actions, no architecture detour:
    start-stop tap is still required. Do not claim wake-word or barge-in currently works.
 4. Implement actual per-app conversation/task navigation. Saved aliases target window titles only;
    they cannot select hidden tasks/tabs in Claude, Antigravity or Codex.
-5. Listen to the commander profile with the user; current stock British base voice + mild effect is
-   NOT a reproduced Optimus Prime performance. Do not spend days tuning without an A/B listen.
+5. DONE, September 5. The commander A/B listen happened. Nine candidates were rendered through the
+   real synthesizer on the actual review line: five pitch/resonance points (0.88/0.14 to 1.00/0.00)
+   on the British base, then four deadpan takes with the pitch shift and tremolo removed entirely
+   in favour of band limiting plus compression, on `en_US-ryan-high` and `en_US-joe-medium`.
+   The user chose the already-shipped `0.93 / 0.06` on `en_GB-northern_english_male`, so
+   `VoiceProfile.Default` is unchanged and confirmed rather than assumed. Do not reopen this.
+   Known accepted cost: the pitch coloration stretches a review roughly 40 percent (10.8s versus
+   7.5s for the same words on the flat ryan take). The user was told and accepted it.
+   Voice cloning stays out of scope. Requests to train on Optimus Prime or TARS audio were declined
+   because both are performances by living actors (Peter Cullen, Bill Irwin); the character-voice
+   models in the Home Assistant community thread are unlicensed clones and must not be used.
+   If a base voice change is ever wanted, `OPTIMUS_TTS_VOICE` overrides the model path with no code
+   change, and Bryce Beattie's public-domain LibriVox-trained voices are a clean source.
 
 Settings: `%LOCALAPPDATA%\OptimusVoiceOS\preferences.json` (no prompt/audio history). Voice commands
 are documented in README and PROJECT_PLAN. Unmute affects subsequent runs, not cancelled narration.
