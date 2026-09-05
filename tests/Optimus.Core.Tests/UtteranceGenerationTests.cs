@@ -180,6 +180,7 @@ public class UtteranceGenerationTests
 
         // Run dispatched work inline so the test observes deterministic ordering.
         var viewModel = new WidgetViewModel(action => action());
+        viewModel.CleanupEnabled = true;
         viewModel.AttachController(controller);
         return (viewModel, controller, capture, hotkey);
     }

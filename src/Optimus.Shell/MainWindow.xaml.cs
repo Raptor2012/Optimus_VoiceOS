@@ -17,6 +17,13 @@ public partial class MainWindow : Window
 
         // Position in bottom-right corner of main work area
         Loaded += OnLoaded;
+        MaxHeight = SystemParameters.WorkArea.Height - 32;
+        SizeChanged += (_, _) =>
+        {
+            if (!IsLoaded) return;
+            var area = SystemParameters.WorkArea;
+            Top = Math.Max(area.Top, Math.Min(Top, area.Bottom - ActualHeight));
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)

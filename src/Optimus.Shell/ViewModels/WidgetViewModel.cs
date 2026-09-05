@@ -20,7 +20,7 @@ using Optimus.Providers;
 using Optimus.Providers.Windows;
 using Optimus.Shell.Models;
 
-public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
+public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly Action<Action> _dispatchAction;
     private PushToTalkController? _controller;
@@ -32,7 +32,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     private string _draftText = string.Empty;
     private string _rawTranscript = string.Empty;
     private string _stageTimings = string.Empty;
-    private string _destinationName = "Claude (configured)";
+    private string _destinationName = "Say Claude, Antigravity, or Codex";
     private string _errorMessage = string.Empty;
     private string _hotkeyLabel = "F8";
     private DestinationOption? _selectedDestination;
@@ -198,6 +198,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(HasSelectedDestination));
                 UpdateWindowChoices();
                 SelectedDestinationChanged?.Invoke(this, value);
+                SavePreferences();
 
                 // If destination changed during review or approval, reset to Confirm and reread
                 if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
@@ -811,10 +812,12 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
         if (destination == null)
         {
-            SpeechStatus = "Choose a destination to hear the review.";
+            SpeechStatus = "Choose a destination by voice.";
+            _ = AskForDestinationAsync();
             return;
         }
 
+        TryRestoreOrBind(destination);
         DestinationStatus probeStatus = destination.Adapter.Probe();
         destination.Status = probeStatus;
         DestinationName = FormatDestinationWithWindow(destination.DisplayName, destination.Adapter.BoundWindow);
@@ -849,7 +852,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             SpokenReviewResult result;
             try
             {
-                result = await speech.SpeakReviewAsync(draft, destinationName).ConfigureAwait(false);
+                result = ShortReview
+                    ? await speech.SpeakPromptAsync($"Send the displayed prompt to {destinationName}?", _processingCts?.Token ?? default).ConfigureAwait(false)
+                    : await speech.SpeakReviewAsync(draft, destinationName).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -955,6 +960,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             destination.Adapter.Bind(window);
+            SavePreferences();
             destination.Status = destination.Adapter.Probe();
             DestinationName = FormatDestinationWithWindow(destination.DisplayName, destination.Adapter.BoundWindow);
             StatusLine = $"{destination.DisplayName} bound to {window.DisplayLabel}";
@@ -1005,6 +1011,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             if (e.IsCapturing)
             {
+                AgentRunCancelled?.Invoke(this, EventArgs.Empty);
                 State = WidgetState.Listening;
                 StatusLine = "Listening... release key to finish";
             }
@@ -1022,6 +1029,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     /// </remarks>
     private int BeginNewUtterance()
     {
+        State = WidgetState.Processing;
         AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         Interlocked.Increment(ref _spokenReviewGeneration);
         _approvalListener?.Cancel();
@@ -1120,12 +1128,22 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 }
 
                 string textToClean = transcription.Text;
+                bool handled = false;
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(generation)) handled = HandleConversationCommand(transcription.Text, duringApproval: false);
+                });
+                if (handled) return;
 
                 // Destination voice prefix stripping and routing
                 VoiceDestinationResolver? resolver = _destinationResolver;
                 if (resolver != null)
                 {
                     VoiceDestinationResolution resolution = resolver.Resolve(transcription.Text);
+                    if (resolution.Status is VoiceDestinationResolutionStatus.Unknown or VoiceDestinationResolutionStatus.Ambiguous)
+                    {
+                        _dispatchAction(() => { if (IsCurrent(generation)) SelectedDestination = null; });
+                    }
                     if (resolution.Status == VoiceDestinationResolutionStatus.Resolved && resolution.DestinationId != null)
                     {
                         _dispatchAction(() =>
@@ -1135,6 +1153,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                             if (matched != null)
                             {
                                 SelectedDestination = matched;
+                                ApplyAliasWindow(transcription.Text, matched);
                             }
                         });
                     }
@@ -1142,9 +1161,18 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 }
 
                 token.ThrowIfCancellationRequested();
+                if (string.IsNullOrWhiteSpace(textToClean))
+                {
+                    _dispatchAction(() => { if (IsCurrent(generation)) StartRedictation(); });
+                    return;
+                }
 
                 CleanupResult cleanup;
-                if (!string.IsNullOrWhiteSpace(textToClean))
+                if (!CleanupEnabled)
+                {
+                    cleanup = new CleanupResult(textToClean, 0, false, "Cleanup off");
+                }
+                else if (!string.IsNullOrWhiteSpace(textToClean))
                 {
                     try
                     {
@@ -1176,7 +1204,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                     State = WidgetState.Confirm;
                     StatusLine = cleanup.Applied
                         ? "Review the draft, then confirm"
-                        : $"Cleanup unavailable ({cleanup.UnavailableReason}) — showing raw transcript";
+                        : "Your words — review, then confirm";
                     MaybeSpeakReview();
                 });
             }
@@ -1289,12 +1317,20 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             }
 
             LastApprovalStatus = $"Heard: \"{commandText}\" ({command})";
+            bool commandHandled = false;
+            _dispatchAction(() =>
+            {
+                if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen)
+                    commandHandled = HandleConversationCommand(commandText, duringApproval: true);
+            });
+            if (commandHandled) return;
 
             switch (command)
             {
                 case ApprovalCommand.Affirmative:
-                    _controller?.Start();
-                    await ConfirmAsync().ConfigureAwait(false);
+                    Task? send = null;
+                    _dispatchAction(() => send = ConfirmAsync());
+                    if (send != null) await send.ConfigureAwait(false);
                     return;
 
                 case ApprovalCommand.Cancel:
@@ -1324,6 +1360,17 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                                 ? $"Didn't catch that. Send to {destination.DisplayName}, or redictate?"
                                 : $"Didn't catch \"{commandText}\". Send to {destination.DisplayName}, or redictate?";
                         });
+                        var speech = _draftOriginPhone ? _phoneSpeech : _speech;
+                        if (speech != null)
+                        {
+                            try
+                            {
+                                var retry = await speech.SpeakPromptAsync(
+                                    $"Say send to confirm {destination.DisplayName}, redictate, or cancel.", token).ConfigureAwait(false);
+                                if (!retry.ApprovalMayBegin) return;
+                            }
+                            catch (OperationCanceledException) { return; }
+                        }
                     }
                     else
                     {
@@ -1630,6 +1677,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                         try
                         {
                             destination.Adapter.Bind(selectionResult.SelectedCandidate!);
+                            SavePreferences();
                             destination.Status = destination.Adapter.Probe();
                             SelectedWindowChoice = selectionResult.SelectedCandidate;
                             UpdateWindowChoices();

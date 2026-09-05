@@ -4,7 +4,13 @@ A personal Windows + Pixel 9a voice layer for coding agents.
 
 Current flow:
 
-`push-to-talk -> local STT -> local cleanup -> inspect/edit -> explicit destination -> confirm -> send`
+`talk -> local STT -> remembered/voice-selected destination -> spoken review -> say send`
+
+Say `switch to Claude`, `remember this as voice project`, `replace blue with green`,
+`add unit tests`, `use original`, `read that again`, or `cancel` during review.
+Cleanup is off by default (`cleanup on` enables it). Exact full readback is the default;
+`short readback` announces the destination only. PC and Pixel share the same voice workflow.
+An initial PC hotkey hold or Pixel start/stop tap is still needed; this is not always-listening yet.
 
 The immediate target is one user, one PC, and one phone over private LAN/Tailscale. Release-grade pairing, crypto, compatibility layers, and generalized infrastructure are deliberately deferred.
 
@@ -47,10 +53,10 @@ Three fixed Windows targets, matched by process name:
 | Antigravity | `Antigravity` | Antigravity IDE |
 | Codex (ChatGPT app) | `ChatGPT` | Codex is a workspace *inside* the ChatGPT desktop app |
 
-Nothing is selected or bound automatically. Pick a destination, then bind it to one exact
-window; when an app has several windows (the ChatGPT app normally has two) the widget lists them
-and refuses to send until you choose. A closed or ambiguous target fails the send and leaves the
-draft untouched — it never falls back to another window.
+Choose an agent by voice once. A lone first-use window binds without another click; several
+windows get a spoken numbered choice. Your choice is remembered and announced before each send.
+After restart, saved titles must match exactly and uniquely; otherwise voice selection resumes.
+Say `remember this as [name]` to create a personal window alias. Aliases do not navigate hidden tabs.
 
 Because Codex and ChatGPT share one window and are switched by an in-app selector, the adapter
 cannot tell which workspace is active. Make sure the bound window has Codex selected.
@@ -64,4 +70,7 @@ $env:OPTIMUS_UI_SMOKE=1      # live focus/type/submit (steals focus while it run
 dotnet test .\Optimus.sln -c Release
 ```
 
-Next: S000 removes obsolete infrastructure; then S001 begins the runnable Windows path.
+Build Pixel: `.\android\gradlew.bat -p android testDebugUnitTest assembleDebug`.
+APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+Next: dogfood voice switching, spoken edits and readback from both devices; then implement
+continuous session initiation and actual in-app conversation navigation.

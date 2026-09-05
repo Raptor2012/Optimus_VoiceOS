@@ -23,6 +23,13 @@ public sealed class AgentNarrationCoordinator : IDisposable
     private long _generation;
     private long _activeGeneration;
     private bool _disposed;
+    private volatile bool _muted;
+
+    public void SetMuted(bool muted)
+    {
+        _muted = muted;
+        if (muted) Cancel();
+    }
 
     public AgentNarrationCoordinator(
         PiperSpeechSynthesizer synthesizer,
@@ -46,6 +53,7 @@ public sealed class AgentNarrationCoordinator : IDisposable
         }
 
         Cancel();
+        if (_muted) return;
         var observer = windows.CreateObserver();
 
         var cts = new CancellationTokenSource();

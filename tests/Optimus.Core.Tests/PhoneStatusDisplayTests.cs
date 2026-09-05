@@ -72,7 +72,7 @@ public class PhoneStatusDisplayTests
             System.IO.Path.Combine(RepositoryRoot(), "src", "Optimus.Shell", "MainWindow.xaml"));
 
         Assert.Contains("{Binding PhoneStatus}", xaml, System.StringComparison.Ordinal);
-        Assert.Contains("Binding HasPhoneStatus", xaml, System.StringComparison.Ordinal);
+        Assert.Contains("Binding ShowDetails", xaml, System.StringComparison.Ordinal);
 
         foreach (string name in new[] { nameof(WidgetViewModel.PhoneStatus), nameof(WidgetViewModel.HasPhoneStatus) })
         {

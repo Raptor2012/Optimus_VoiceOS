@@ -7,10 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.remember
 import androidx.core.content.ContextCompat
@@ -35,9 +34,16 @@ class MainActivity : ComponentActivity() {
         model = ViewModelProvider(this)[TalkViewModel::class.java]
 
         setContent {
-            // Follows the system setting, so the phone gets a real dark mode.
+            // Shared midnight / ice-blue palette with the Windows widget.
             MaterialTheme(
-                colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
+                colorScheme = darkColorScheme(
+                    primary = Color(0xFF7DD3FC), onPrimary = Color(0xFF07121E),
+                    secondary = Color(0xFFA7B8CD), background = Color(0xFF0B111B),
+                    surface = Color(0xFF111C2B), surfaceVariant = Color(0xFF1A293C),
+                    onBackground = Color(0xFFEAF2FA), onSurface = Color(0xFFEAF2FA),
+                    onSurfaceVariant = Color(0xFFA7B8CD), outline = Color(0xFF34465C),
+                    error = Color(0xFFFF9C95)
+                )
             ) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     val vm = remember { model }

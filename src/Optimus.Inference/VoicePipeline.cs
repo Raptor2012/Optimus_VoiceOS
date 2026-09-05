@@ -58,7 +58,7 @@ public sealed class VoicePipeline : IDisposable
     /// Loads and then primes both models, so the first real utterance runs at steady-state
     /// latency instead of paying first-call cost.
     /// </summary>
-    public async Task WarmupAsync(CancellationToken cancellationToken = default)
+    public async Task WarmupAsync(bool includeCleanup = true, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -70,8 +70,11 @@ public sealed class VoicePipeline : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        _cleaner.EnsureLoaded();
-        await _cleaner.PrimeAsync(cancellationToken).ConfigureAwait(false);
+        if (includeCleanup)
+        {
+            _cleaner.EnsureLoaded();
+            await _cleaner.PrimeAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

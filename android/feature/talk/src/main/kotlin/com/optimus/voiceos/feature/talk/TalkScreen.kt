@@ -20,6 +20,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -76,6 +80,7 @@ fun TalkScreen(
     onNarrateToolsChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var showDetails by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -86,9 +91,13 @@ fun TalkScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Optimus Voice OS", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Text("OPTIMUS", fontSize = 22.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
+        Text("VOICE WORKSPACE", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        // The PC address is always typed in by hand; nothing is discovered or guessed.
+        TextButton(onClick = { showDetails = !showDetails }) {
+            Text(if (showDetails) "Hide controls" else "Connection & controls")
+        }
+        if (!state.connected || showDetails) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -124,10 +133,11 @@ fun TalkScreen(
                 modifier = Modifier.weight(1f)
             ) { Text("Disconnect") }
         }
+        }
 
         Text(state.connectionLabel, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
 
-        // Push-to-talk: held down, exactly like the desktop hotkey.
+        // One tap starts, another ends initial dictation; review and approval are spoken.
         Button(
             onClick = { if (state.capturing) onStopCapture() else onStartCapture() },
             enabled = state.connected,
@@ -142,7 +152,15 @@ fun TalkScreen(
         }
 
         Text(state.status, fontSize = 15.sp)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("DESTINATION", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.selectedDestination?.name ?: "Say Claude, Antigravity, or Codex", color = MaterialTheme.colorScheme.primary)
+                state.selectedDestination?.let { Text(it.detail, fontSize = 12.sp) }
+            }
+        }
 
+        if (showDetails) {
         Text("AGENT NARRATION", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             RadioButton(
@@ -167,6 +185,7 @@ fun TalkScreen(
                 color = MaterialTheme.colorScheme.primary
             )
         }
+        }
 
         if (state.sendSummary.isNotBlank()) {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -179,12 +198,12 @@ fun TalkScreen(
             }
         }
 
-        if (state.rawTranscript.isNotBlank()) {
+        if (showDetails && state.rawTranscript.isNotBlank()) {
             Labelled("RAW TRANSCRIPT", state.rawTranscript)
         }
 
         if (state.hasDraft) {
-            Text("CLEANED DRAFT (editable)", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text("PROMPT — say send, redictate, or replace words", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = state.cleanedDraft,
                 onValueChange = onDraftChange,
@@ -193,7 +212,7 @@ fun TalkScreen(
                 minLines = 2
             )
 
-            // Destination is always an explicit choice; nothing is preselected.
+            if (showDetails) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -265,6 +284,7 @@ fun TalkScreen(
                     )
                     else -> Unit
                 }
+            }
             }
         }
 

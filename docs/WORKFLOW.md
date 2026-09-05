@@ -1,6 +1,39 @@
 # Fast multi-model workflow
 
-The user controls the Claude, Antigravity/Gemini, and Codex sessions. Sol reviews only.
+The user controls the Claude, Antigravity/Gemini, and Codex sessions. Sol normally reviews only;
+the user's September 5 request explicitly authorizes Codex implementation for this pass.
+
+## Current handover — voice-first UX pass, September 5
+
+Workspace: `D:\SamHaydenVoiceTool\Optimus_VoiceOS`, main, based on `c01d87d`.
+This section supersedes the historical handoff below. Do not redo S007/S008 phone approval.
+
+Implemented: remembered agent and exact-window titles, voice aliases, first-use lone-window binding,
+spoken destination recovery, spoken draft edits with fresh review, cleanup off by default, short/full
+review preference, shared PC/Pixel pipeline, phone saved address/launch reconnect, matching dark UI,
+and a modest lower-register metallic commander effect using the existing Piper engine.
+
+Verification: 362 .NET tests passed including the window-sizing adjustment; Android unit
+tests and debug APK build succeeded. Actual Piper warm first-byte median 248 ms, RTF 0.165 over five
+runs. This measures engine bytes, not first audible output. Windows app launched, then was stopped
+for rebuilding. Computer-use capture failed (`no screenshot targets found`); visual QA unverified.
+ADB reported no attached Pixel, so the new APK has NOT been installed or visually tested there.
+
+Next actions, no architecture detour:
+
+1. Run `dotnet test Optimus.sln -c Release`, then launch the shell and dogfood one actual prompt.
+2. Install `android/app/build/outputs/apk/debug/app-debug.apk` when the Pixel reconnects; verify
+   same voice workflow, matching UI, remembered destination and spoken correction.
+3. Add a real continuous voice-session / follow-up initiation path. The initial PC hold / Pixel
+   start-stop tap is still required. Do not claim wake-word or barge-in currently works.
+4. Implement actual per-app conversation/task navigation. Saved aliases target window titles only;
+   they cannot select hidden tasks/tabs in Claude, Antigravity or Codex.
+5. Listen to the commander profile with the user; current stock British base voice + mild effect is
+   NOT a reproduced Optimus Prime performance. Do not spend days tuning without an A/B listen.
+
+Settings: `%LOCALAPPDATA%\OptimusVoiceOS\preferences.json` (no prompt/audio history). Voice commands
+are documented in README and PROJECT_PLAN. Unmute affects subsequent runs, not cancelled narration.
+Continue checking the 5h allowance; below 5% remaining, update this handover and stop implementation.
 
 ## Starting work
 

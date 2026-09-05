@@ -278,6 +278,9 @@ public sealed class PiperSpeechSynthesizer : IDisposable
             throw new InvalidOperationException("The speech engine produced no audio.");
         }
 
+        stopwatch.Start();
+        pcm = CommanderVoiceEffect.Apply(pcm, SampleRate, _profile.PitchRatio, _profile.Resonance);
+        stopwatch.Stop();
         return new SpeechSegment(
             text,
             pcm,

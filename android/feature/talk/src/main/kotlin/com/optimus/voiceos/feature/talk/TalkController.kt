@@ -264,13 +264,12 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 }
 
-/** A new utterance can never inherit the previous prompt's destination choice. */
+/** Follow-ups retain the user's selected conversation until explicitly switched. */
 internal fun TalkUiState.forNewCapture(): TalkUiState = copy(
     rawTranscript = "",
     cleanedDraft = "",
     timings = "",
-    sendSummary = "",
-    selectedDestinationId = null
+    sendSummary = ""
 )
 
 /** Success consumes the draft; failure keeps the exact text and destination available to retry. */
@@ -279,7 +278,7 @@ internal fun TalkUiState.withSendOutcome(event: PcEvent.SendOutcome): TalkUiStat
     rawTranscript = if (event.ok) "" else rawTranscript,
     cleanedDraft = if (event.ok) "" else cleanedDraft,
     timings = if (event.ok) "" else timings,
-    selectedDestinationId = if (event.ok) null else selectedDestinationId,
+    selectedDestinationId = selectedDestinationId,
     sendSummary = if (event.ok) {
         "Sent to " + event.destination
     } else {

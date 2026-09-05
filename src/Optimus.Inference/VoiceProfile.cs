@@ -14,8 +14,9 @@ using System.Globalization;
 /// sentence rather than a rushed run-on).
 /// </para>
 /// <para>
-/// It deliberately does not target any real person, actor, or existing character performance,
-/// and no voice cloning, reference audio, or speaker embedding of a real individual is used.
+/// The requested direction is an Optimus-Prime-inspired robotic commander: lower register,
+/// restrained cadence, subtle metallic texture. This does not reproduce the actor's performance;
+/// no voice cloning, reference audio, or speaker embedding is used.
 /// </para>
 /// <para>
 /// Base voice selected by the S006 measurement on this machine: Piper
@@ -29,13 +30,15 @@ public sealed record VoiceProfile(
     double NoiseW,
     double SentenceSilenceSeconds)
 {
+    public double PitchRatio { get; init; } = 0.93;
+    public double Resonance { get; init; } = 0.06;
     /// <summary>
     /// The shipped profile.
     /// </summary>
     /// <remarks>
     /// <list type="bullet">
-    /// <item><c>LengthScale 1.06</c> — slightly slower than default for a deliberate, weighted
-    /// read, without adding enough duration to hurt the latency budget.</item>
+    /// <item><c>LengthScale 1.00</c> — neutral synthesis speed; pitch coloration adds about
+    /// 7.5 percent duration, so the combined voice remains deliberate without a long delay.</item>
     /// <item><c>NoiseScale 0.55</c> — below the 0.667 default, reducing pitch waver so the voice
     /// sounds settled rather than expressive.</item>
     /// <item><c>NoiseW 0.60</c> — below the 0.8 default, steadying phoneme durations. This is what
@@ -45,7 +48,7 @@ public sealed record VoiceProfile(
     /// </list>
     /// </remarks>
     public static VoiceProfile Default { get; } = new(
-        LengthScale: 1.06,
+        LengthScale: 1.00,
         NoiseScale: 0.55,
         NoiseW: 0.60,
         SentenceSilenceSeconds: 0.15);

@@ -61,6 +61,7 @@ public partial class App : Application
         // The three configured Windows targets. Nothing is selected by default; the user picks.
         _destinations = new DestinationRegistry();
         _viewModel.AttachDestinations(_destinations);
+        _viewModel.LoadPreferences(PersonalSettings.DefaultPath);
 
         // --no-models runs capture only. A manual draft also skips the ~3.8 GB model load,
         // making destination-adapter dogfooding immediate even when the microphone is muted.
@@ -71,7 +72,8 @@ public partial class App : Application
 
             WidgetViewModel viewModel = _viewModel;
             VoicePipeline pipeline = _pipeline;
-            viewModel.StatusLine = "Loading speech and cleanup models...";
+            bool warmCleanup = viewModel.CleanupEnabled;
+            viewModel.StatusLine = warmCleanup ? "Loading speech and cleanup models..." : "Loading local speech recognition...";
 
             // Load AND prime off the UI thread, so the first utterance runs at steady-state
             // latency rather than paying the one-off prompt-processing cost.
@@ -79,7 +81,7 @@ public partial class App : Application
             {
                 try
                 {
-                    await pipeline.WarmupAsync().ConfigureAwait(false);
+                    await pipeline.WarmupAsync(includeCleanup: warmCleanup).ConfigureAwait(false);
                     Dispatcher.Invoke(() => viewModel.StatusLine = $"Ready — Hold {viewModel.HotkeyLabel} to speak");
                 }
                 catch (Exception ex)
@@ -152,6 +154,18 @@ public partial class App : Application
                 }),
                 onDraftEdited: text => Dispatcher.Invoke(() =>
                     viewModel.DraftText = text));
+            _phoneSession.ProcessCapturedAudio = pcm => Dispatcher.Invoke(() => viewModel.ProcessPhoneAudio(pcm));
+            _phoneSession.CaptureBeginning = () => Dispatcher.Invoke(viewModel.PhoneCaptureBeginning);
+            _viewModel.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(WidgetViewModel.State))
+                {
+                    if (viewModel.IsDraftVisible)
+                        _phoneEndpoint.SendDraft(viewModel.RawTranscript, viewModel.DraftText, viewModel.StageTimings, viewModel.SelectedDestination?.DestinationId);
+                }
+                if (change.PropertyName is nameof(WidgetViewModel.State) or nameof(WidgetViewModel.StatusLine))
+                    _phoneEndpoint.SendStatus(viewModel.State.ToString(), viewModel.StatusLine);
+            };
 
             _viewModel.SendingStarted += (_, ev) => _phoneSession?.NotifySending(ev.Text, ev.DestinationId, ev.DestinationName);
             _viewModel.SendCompleted += (_, ev) => _phoneSession?.NotifySendCompleted(ev.Text, ev.DestinationName, ev.Result);
@@ -198,6 +212,7 @@ public partial class App : Application
                 line => Dispatcher.Invoke(() => viewModel.NarrationStatus = line));
             viewModel.AgentRunStarting += OnAgentRunStarting;
             viewModel.AgentRunCancelled += OnAgentRunCancelled;
+            viewModel.NarrationMuteChanged += OnNarrationMuteChanged;
         }
 
         if (manualDraft != null)
@@ -240,6 +255,7 @@ public partial class App : Application
         {
             _viewModel.AgentRunStarting -= OnAgentRunStarting;
             _viewModel.AgentRunCancelled -= OnAgentRunCancelled;
+            _viewModel.NarrationMuteChanged -= OnNarrationMuteChanged;
         }
         _narration?.Dispose();
         _phoneApprovalListener?.Dispose();
@@ -275,6 +291,8 @@ public partial class App : Application
     }
 
     private void OnAgentRunCancelled(object? sender, EventArgs e) => _narration?.Cancel();
+
+    private void OnNarrationMuteChanged(bool muted) => _narration?.SetMuted(muted);
 
     private void OnPhoneNarrationSettingsChanged(object? sender, PhoneNarrationSettingsEventArgs e)
     {

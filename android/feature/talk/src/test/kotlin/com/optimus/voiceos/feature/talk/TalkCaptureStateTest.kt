@@ -7,7 +7,7 @@ import org.junit.Test
 
 class TalkCaptureStateTest {
     @Test
-    fun newCaptureClearsPreviousDraftAndDestination() {
+    fun newCaptureClearsDraftButKeepsConversation() {
         val previous = TalkUiState(
             rawTranscript = "raw",
             cleanedDraft = "clean",
@@ -22,11 +22,11 @@ class TalkCaptureStateTest {
         assertEquals("", next.cleanedDraft)
         assertEquals("", next.timings)
         assertEquals("", next.sendSummary)
-        assertNull(next.selectedDestinationId)
+        assertEquals("claude", next.selectedDestinationId)
     }
 
     @Test
-    fun successfulSendConsumesDraftAndDestination() {
+    fun successfulSendConsumesDraftAndKeepsConversation() {
         val sending = TalkUiState(
             rawTranscript = "raw",
             cleanedDraft = "edited draft",
@@ -38,7 +38,7 @@ class TalkCaptureStateTest {
         val sent = sending.withSendOutcome(PcEvent.SendOutcome(true, "Claude", "delivered"))
 
         assertEquals("", sent.cleanedDraft)
-        assertNull(sent.selectedDestinationId)
+        assertEquals("claude", sent.selectedDestinationId)
         assertEquals("Sent to Claude", sent.sendSummary)
     }
 

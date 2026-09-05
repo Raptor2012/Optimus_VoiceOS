@@ -34,6 +34,8 @@ public sealed class PhoneSession : IDisposable
     private readonly Action<string>? _onDestinationSelected;
     private readonly Action<string>? _onDraftEdited;
     private readonly object _lock = new();
+    public Action<byte[]>? ProcessCapturedAudio { get; set; }
+    public Action? CaptureBeginning { get; set; }
 
     private MemoryStream? _buffer;
     private CancellationTokenSource? _processingCts;
@@ -261,6 +263,7 @@ public sealed class PhoneSession : IDisposable
 
     private void OnCaptureStarted(object? sender, EventArgs e)
     {
+        CaptureBeginning?.Invoke();
         Interlocked.Exchange(ref _sendInProgress, 0);
         lock (_lock)
         {
@@ -305,6 +308,11 @@ public sealed class PhoneSession : IDisposable
         }
 
         double seconds = pcm.Length / 32000.0;
+        if (ProcessCapturedAudio != null)
+        {
+            ProcessCapturedAudio(pcm);
+            return;
+        }
 
         if (_pipeline == null)
         {

@@ -68,7 +68,7 @@ public sealed class VoiceDestinationResolverTests
     }
 
     [Fact]
-    public void Resolve_OverlappingAliasesReturnsAmbiguousInsteadOfChoosingLongest()
+    public void Resolve_ExplicitProjectAliasWinsOverAppAlias()
     {
         var resolver = CreateResolver(
             new VoiceDestinationAlias("codex", "Codex"),
@@ -76,8 +76,8 @@ public sealed class VoiceDestinationResolverTests
 
         VoiceDestinationResolution result = resolver.Resolve("To Codex Project Y, fix the login test");
 
-        Assert.Equal(VoiceDestinationResolutionStatus.Ambiguous, result.Status);
-        Assert.Null(result.DestinationId);
+        Assert.Equal(VoiceDestinationResolutionStatus.Resolved, result.Status);
+        Assert.Equal("codex-y", result.DestinationId);
     }
 
     [Fact]

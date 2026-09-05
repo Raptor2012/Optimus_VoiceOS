@@ -234,6 +234,17 @@ real-device dogfood to tune per-app UI text classification and narration phrasin
 
 ## S011 — Dogfood and measured latency fixes
 
+September 5 update (supersedes the original binding bullets below): personal voice-first slice
+implemented by Codex at the user's request. Remember agent/window preferences, first-use lone-window
+binding without an extra click, exact-title restoration, saved spoken window aliases, spoken edits,
+optional cleanup (off by default), optional short review, shared phone/PC processing. Matching dark
+UI, hidden details, phone saved connection, commander voice coloration. Full readback and affirmative
+send remain the default. Tests cover spoken edits requiring fresh approval and no destination/draft loss.
+
+Next runnable slice: continuous voice-session initiation and follow-ups, then true conversation
+selection inside each app. HWND aliases alone do not select a task/tab. Dogfood current changes first;
+no further architecture or security review. Pixel was not attached during this implementation pass.
+
 Immediate next task for Gemini: remove the mouse-only window-binding step on PC and Pixel.
 
 - Implement the spoken window-selection flow in PROJECT_PLAN.md using the existing local TTS,

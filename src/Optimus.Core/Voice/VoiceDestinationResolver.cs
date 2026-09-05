@@ -37,6 +37,8 @@ public sealed class VoiceDestinationResolver
     public VoiceDestinationResolution Resolve(string? transcript)
     {
         string source = transcript?.Trim() ?? string.Empty;
+        if (source.StartsWith("switch to ", StringComparison.OrdinalIgnoreCase))
+            source = source[7..];
         bool hasToPrefix = TryConsumeToPrefix(source, out int aliasStart);
         if (!hasToPrefix)
         {
@@ -57,6 +59,10 @@ public sealed class VoiceDestinationResolver
             return new(hasToPrefix ? VoiceDestinationResolutionStatus.Unknown : VoiceDestinationResolutionStatus.Missing, null, source);
         }
 
+        // Prefer the most specific alias ("Claude VoiceOS" over "Claude").
+        int longest = matches.Max(match => match.End);
+        matches = matches.Where(match => match.End == longest)
+            .DistinctBy(match => match.Alias.DestinationId).ToList();
         if (matches.Count != 1)
         {
             return new(VoiceDestinationResolutionStatus.Ambiguous, null, source);

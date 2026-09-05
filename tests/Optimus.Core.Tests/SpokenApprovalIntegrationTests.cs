@@ -18,6 +18,56 @@ using Xunit;
 
 public class SpokenApprovalIntegrationTests
 {
+    [Fact]
+    public async Task SpokenEditRequiresFreshReviewBeforeSending()
+    {
+        var (widget, claude, _, _, _, _, speech, approval) = CreateContext();
+        using (widget)
+        {
+            widget.SelectedDestination = widget.Destinations[0];
+            approval.EnqueueApproval(MakeAudio("replace blue with green"));
+            widget.LoadManualDraft("Make the button blue.");
+            await speech.WaitUntilSpoken(2);
+            Assert.Equal("Make the button green.", widget.DraftText);
+            Assert.Empty(claude.Sent);
+            approval.EnqueueApproval(MakeAudio("send"));
+            for (int i = 0; i < 100 && claude.Sent.Count == 0; i++) await Task.Delay(10);
+            Assert.Equal("Make the button green.", Assert.Single(claude.Sent));
+        }
+    }
+
+    [Fact]
+    public async Task MissingDestinationCanBeChosenByVoiceWithoutLosingDraft()
+    {
+        var (widget, claude, _, _, _, _, speech, approval) = CreateContext();
+        using (widget)
+        {
+            approval.EnqueueApproval(MakeAudio("Claude"));
+            widget.LoadManualDraft("Do not change the API.");
+            await speech.WaitUntilSpoken(2);
+            Assert.Equal("claude", widget.SelectedDestination?.DestinationId);
+            Assert.Equal("Do not change the API.", widget.DraftText);
+            Assert.Empty(claude.Sent);
+        }
+    }
+
+    [Fact]
+    public async Task PhoneUsesSharedRawPipelineAndRememberedDestination()
+    {
+        var (widget, claude, _, _, _, cleaner, speech, _) = CreateContext();
+        using (widget)
+        {
+            widget.CleanupEnabled = false;
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.ProcessPhoneAudio(MakeAudio("Do not reply, just preserve this instruction."));
+            for (int i = 0; i < 100 && !widget.HasDraft; i++) await Task.Delay(10);
+            Assert.Equal("Do not reply, just preserve this instruction.", widget.DraftText);
+            Assert.Equal("claude", widget.SelectedDestination?.DestinationId);
+            Assert.Equal(0, cleaner.CallCount);
+            Assert.Empty(claude.Sent);
+        }
+    }
+
     private static byte[] MakeAudio(string text) => Encoding.UTF8.GetBytes(text);
 
     private static (
@@ -46,6 +96,7 @@ public class SpokenApprovalIntegrationTests
         var approvalListener = new FakeApprovalListener();
 
         var widget = new WidgetViewModel(action => action());
+        widget.CleanupEnabled = true; // Exercise the optional model path in this suite.
         widget.AttachController(controller);
         widget.AttachDestinations(registry);
         widget.AttachPipeline(pipeline);
@@ -579,7 +630,7 @@ public class SpokenApprovalIntegrationTests
     }
 
     [Fact]
-    public async Task SpokenWindowSelection_SingleCandidate_BindsAndRequiresSeparateSendApproval()
+    public async Task SpokenWindowSelection_SingleCandidate_BindsAutomaticallyAndRequiresSendApproval()
     {
         var candidate = new WindowCandidate(1001, 100, "Code", "Optimus_VoiceOS - Visual Studio Code", "Chrome_WidgetWin_1");
         var adapter = new RecordingAdapter("antigravity", "Antigravity", ready: false, new[] { candidate });
@@ -588,7 +639,6 @@ public class SpokenApprovalIntegrationTests
         using (widget)
         {
             // First approval response will bind the window: "use that window"
-            approval.EnqueueApproval(Encoding.UTF8.GetBytes("use that window"));
             // Second approval response will approve the send: "send"
             approval.EnqueueApproval(Encoding.UTF8.GetBytes("send"));
 
@@ -596,7 +646,7 @@ public class SpokenApprovalIntegrationTests
             widget.LoadManualDraft("Test message for antigravity.");
 
             // Wait for 2 spoken reviews (first was window prompt, second was draft review)
-            await speech.WaitUntilSpoken(2);
+            await speech.WaitUntilSpoken(1);
             await Task.Delay(150);
 
             // Window was bound!
@@ -606,7 +656,7 @@ public class SpokenApprovalIntegrationTests
             Assert.Equal("Test message for antigravity.", adapter.Sent[0]);
             Assert.Equal(WidgetState.Sent, widget.State);
             // Spoken prompt asked for window:
-            Assert.Contains(speech.PromptsSpoken, p => p.Contains("Use this window?"));
+            Assert.DoesNotContain(speech.PromptsSpoken, p => p.Contains("Use this window?"));
         }
     }
 

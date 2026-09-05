@@ -9,8 +9,8 @@ The working flow is:
 1. Hold push-to-talk on the PC or phone.
 2. Speak.
 3. Transcribe on the PC with fast local STT.
-4. Clean the text with a small local LLM.
-5. Show the exact cleaned draft and an explicitly selected destination.
+4. Keep raw transcription by default; local LLM cleanup is opt-in by voice.
+5. Show the exact draft and the user's selected or remembered destination.
 6. Read the exact cleaned draft and destination aloud on the device that started the request.
 7. Automatically listen for a spoken confirmation, redictation, or cancellation command.
 8. Send only after an affirmative confirmation.
@@ -29,6 +29,27 @@ This is personal software, not a commercial product. The priority is a useful en
 - Private LAN or Tailscale only. Never expose the PC service through public port forwarding.
 
 ## Core experience
+
+### Personal voice-first UX update — September 5
+
+PC and Pixel share a midnight/ice-blue visual theme: status, exact destination and readable
+prompt first; diagnostics, connection settings and manual controls inside Details. Pixel remembers
+its PC address and reconnects on app launch. One initial hold (PC) or start/stop tap (Pixel) is
+still required; continuous/wake-word initiation is not yet implemented.
+
+Spoken controls: switch to [agent/alias], remember this as [alias], add [words], replace [old]
+with [new], remove the last sentence, use original, read that again, cleanup on/off, full/short
+readback, summaries only/full commentary, tools on/off, mute/unmute narration, show/hide details.
+Edits during approval require a fresh review before send. Full exact readback is the default;
+short readback is an explicit preference and announces the displayed prompt's exact destination.
+Aliases name exact window titles, not hidden conversations inside an app. Mute stops the current
+narration; unmute enables narration for subsequent sends.
+
+Voice direction: Optimus-Prime-inspired deep robotic commander, measured and restrained. Current
+implementation uses the existing warm Piper voice with 0.93 pitch ratio and a subtle 6% metallic
+layer, identically on PC and phone. This changes color/register, not the speaker's accent or acting;
+character likeness is not proven. It adds about 7.5% audio duration, not another model inference.
+Warm engine first-byte median measured 248 ms (five runs); this is not speaker-audible latency.
 
 ### Windows widget
 
@@ -77,13 +98,13 @@ The phone captures audio; the PC performs STT, cleanup, and agent sending. The p
 - Destination setup and window binding must work entirely by voice from Windows or Pixel,
   including the first use. A mouse-only binding step does not satisfy the normal workflow.
 - After an explicit app/alias choice, resolve the window before reading the draft for send
-  approval. If unbound with one candidate, speak its app and window title and ask "Use this
-  window?" Accept "yes" or "use that window" as binding only. With several candidates,
+  approval. On first use with one candidate, bind it and announce its exact title in the send
+  review; no separate binding approval is needed. With several candidates,
   announce numbered titles and accept "window two" or an exact unique title. Automatically
   listen after playback on the initiating device. "Repeat options", "refresh windows", and
   "cancel" must also work by voice; keep the draft while selecting.
-- Reuse an explicitly bound window while it remains valid, but still require an explicit
-  destination for each new prompt. A closed window returns to spoken window selection.
+- Remember the user's destination and window between prompts and app restarts. Restore a saved
+  window only on an exact unique title match. A closed or changed window returns to spoken selection.
   Choosing a window never also submits the prompt: after binding, read the draft and exact
   destination and separately ask for send approval.
 - Show and speak app plus window/project title, rather than just "Antigravity" or "Codex".
@@ -94,8 +115,8 @@ The phone captures audio; the PC performs STT, cleanup, and agent sending. The p
 - A destination can be chosen by its explicitly configured voice alias, such as
   `To Codex Project Y`, or by a visible card. Spoken routing is accepted only when it resolves
   to exactly one configured destination; otherwise Optimus asks rather than guessing.
-- A destination selection is cleared for every new utterance. Previous choices do not silently
-  carry into the next prompt.
+- Destination selection persists until changed by voice or a control; every send review still
+  announces the actual target. Say "switch to Claude" or "to Antigravity, [prompt]" to change it.
 - After TTS finishes reading the exact draft and destination, Optimus plays a chime and listens
   automatically for an approval command. No second hotkey or mouse action is required.
 - Initial affirmative vocabulary: `yes`, `yeah`, `yep`, `confirm`, `send`, `send it`,

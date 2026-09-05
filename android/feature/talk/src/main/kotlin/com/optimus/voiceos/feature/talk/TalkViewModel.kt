@@ -3,7 +3,8 @@ package com.optimus.voiceos.feature.talk
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
+import android.app.Application
 
 /**
  * Owns the connection across Activity recreation.
@@ -13,18 +14,29 @@ import androidx.lifecycle.ViewModel
  * A ViewModel survives configuration changes and is cleared only when the screen really goes
  * away, which is exactly the lifetime the connection should have.
  */
-class TalkViewModel : ViewModel() {
+class TalkViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val preferences = application.getSharedPreferences("optimus-connection", 0)
 
     var uiState by mutableStateOf(TalkUiState())
         private set
 
     private val controller = TalkController { uiState = it }
 
+    init {
+        controller.setHost(preferences.getString("host", "") ?: "")
+        controller.setPort(preferences.getString("port", "8770") ?: "8770")
+        if (uiState.host.isNotBlank()) controller.connect()
+    }
+
     fun setHost(host: String) = controller.setHost(host)
 
     fun setPort(port: String) = controller.setPort(port)
 
-    fun connect() = controller.connect()
+    fun connect() {
+        preferences.edit().putString("host", uiState.host).putString("port", uiState.port).apply()
+        controller.connect()
+    }
 
     fun disconnect() = controller.disconnect()
 
