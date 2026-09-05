@@ -139,6 +139,15 @@ public sealed class PhoneEndpoint : IDisposable
     /// <summary>The phone selected a destination.</summary>
     public event EventHandler<string>? DestinationSelected;
 
+    /// <summary>The phone edited the active draft.</summary>
+    public event EventHandler<string>? DraftEdited;
+
+    private long _playbackGeneration;
+
+    public long NextPlaybackGeneration() => Interlocked.Increment(ref _playbackGeneration);
+
+    public long CurrentPlaybackGeneration => Volatile.Read(ref _playbackGeneration);
+
     public void Start()
     {
         lock (_lock)
@@ -306,9 +315,30 @@ public sealed class PhoneEndpoint : IDisposable
                 RaiseSelectDestination(json);
                 break;
 
+            case "editDraft":
+                RaiseEditDraft(json);
+                break;
+
             default:
                 break;
         }
+    }
+
+    private void RaiseEditDraft(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("text", out JsonElement val))
+            {
+                string? text = val.GetString();
+                if (text != null)
+                {
+                    DraftEdited?.Invoke(this, text);
+                }
+            }
+        }
+        catch (JsonException) { }
     }
 
     private void RaisePlaybackDrained(string json)

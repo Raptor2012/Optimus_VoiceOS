@@ -59,6 +59,9 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public event EventHandler<AgentRunEventArgs>? AgentRunStarting;
     public event EventHandler? AgentRunCancelled;
     public event EventHandler<DestinationOption?>? SelectedDestinationChanged;
+    public event EventHandler<WidgetSendStartingEventArgs>? SendingStarted;
+    public event EventHandler<WidgetSendCompletedEventArgs>? SendCompleted;
+    public event EventHandler? Cancelled;
 
     public WidgetState State
     {
@@ -109,11 +112,14 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(IsDraftVisible));
                 OnPropertyChanged(nameof(IsConfirmPanelVisible));
 
-                // If modified while awaiting approval or reading, invalidate approval and reread
-                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
+                // If modified while awaiting approval, reading, or confirm, invalidate approval and reread
+                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft or WidgetState.Confirm)
                 {
                     _approvalListener?.Cancel();
                     _phoneApprovalListener?.Cancel();
+                    _speech?.Cancel();
+                    _phoneSpeech?.Cancel();
+                    _lastSpokenKey = string.Empty;
                     State = WidgetState.Confirm;
                     _controller?.Start();
                     MaybeSpeakReview();
@@ -630,6 +636,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         ErrorMessage = string.Empty;
         State = WidgetState.Idle;
         StatusLine = $"Cancelled — Hold {HotkeyLabel} to speak";
+        Cancelled?.Invoke(this, EventArgs.Empty);
         _controller?.Start();
     }
 
@@ -718,6 +725,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             IsDraftEditable = false;
             StatusLine = $"Sending to {destination.DisplayName}...";
             AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
+            SendingStarted?.Invoke(this, new WidgetSendStartingEventArgs(confirmed.Text, destination.DestinationId, destination.DisplayName));
 
             SendResult result;
             try
@@ -732,6 +740,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             {
                 IsDraftEditable = true;
             }
+
+            SendCompleted?.Invoke(this, new WidgetSendCompletedEventArgs(confirmed.Text, destination.DisplayName, result));
 
             if (result.Succeeded)
             {
@@ -1420,4 +1430,18 @@ public sealed class AgentRunEventArgs(IDestinationAdapter adapter, bool speakOnP
     public IDestinationAdapter Adapter { get; } = adapter;
     public bool SpeakOnPhone { get; } = speakOnPhone;
     public string ConfirmedPrompt { get; } = confirmedPrompt;
+}
+
+public sealed class WidgetSendStartingEventArgs(string text, string destinationId, string destinationName) : EventArgs
+{
+    public string Text { get; } = text;
+    public string DestinationId { get; } = destinationId;
+    public string DestinationName { get; } = destinationName;
+}
+
+public sealed class WidgetSendCompletedEventArgs(string text, string destinationName, SendResult result) : EventArgs
+{
+    public string Text { get; } = text;
+    public string DestinationName { get; } = destinationName;
+    public SendResult Result { get; } = result;
 }

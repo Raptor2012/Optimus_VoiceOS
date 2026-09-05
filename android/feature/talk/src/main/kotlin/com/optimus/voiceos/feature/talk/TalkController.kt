@@ -43,7 +43,10 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     fun setPort(port: String) = update { it.copy(port = port.filter(Char::isDigit)) }
 
     /** The user edits the draft here; this exact text is what gets confirmed. */
-    fun setDraft(text: String) = update { it.copy(cleanedDraft = text, sendSummary = "") }
+    fun setDraft(text: String) {
+        update { it.copy(cleanedDraft = text, sendSummary = "") }
+        client.editDraft(text)
+    }
 
     /** Destination choice is always an explicit tap. Nothing is preselected. */
     fun selectDestination(id: String) {
@@ -197,6 +200,7 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
             is PcEvent.Disconnected -> {
                 mic.stop()
+                player.reset()
                 update {
                     it.copy(
                         connected = false,

@@ -83,6 +83,36 @@ class PhoneClientPlaybackTest {
         }
     }
 
+    @Test fun sendsEditDraftEventToServer() {
+        ServerSocket(0).use { server ->
+            val received = CountDownLatch(1)
+            var receivedJson = ""
+            thread(isDaemon = true) {
+                server.accept().use { socket ->
+                    PhoneFraming.read(socket.getInputStream()) // hello
+                    val frame = PhoneFraming.read(socket.getInputStream())
+                    if (frame != null) {
+                        receivedJson = String(frame.payload, Charsets.UTF_8)
+                    }
+                    received.countDown()
+                }
+            }
+
+            val connected = CountDownLatch(1)
+            val client = PhoneClient { event ->
+                if (event is PcEvent.Connected) connected.countDown()
+            }
+            client.connect("127.0.0.1", server.localPort)
+            assertTrue(connected.await(5, TimeUnit.SECONDS))
+            client.editDraft("new edited text")
+            assertTrue(received.await(5, TimeUnit.SECONDS))
+            val obj = JSONObject(receivedJson)
+            assertEquals("editDraft", obj.getString("t"))
+            assertEquals("new edited text", obj.getString("text"))
+            client.disconnect()
+        }
+    }
+
     private fun json(output: java.io.OutputStream, value: JSONObject) =
         PhoneFraming.write(output, PhoneFrameKind.JSON, value.toString().toByteArray(Charsets.UTF_8))
 }

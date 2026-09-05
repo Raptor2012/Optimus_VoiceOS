@@ -298,6 +298,47 @@ public class SpokenApprovalIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task SpokenApproval_AffirmativeSendsEditedDraft_AndFiresSendEvents()
+    {
+        var (widget, claude, _, _, _, _, speech, approvalListener) = CreateContext();
+        using (widget)
+        {
+            var startingTcs = new TaskCompletionSource<WidgetSendStartingEventArgs>();
+            var completedTcs = new TaskCompletionSource<WidgetSendCompletedEventArgs>();
+
+            widget.SendingStarted += (_, e) => startingTcs.TrySetResult(e);
+            widget.SendCompleted += (_, e) => completedTcs.TrySetResult(e);
+
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.LoadManualDraft("Initial text.");
+
+            await speech.WaitUntilSpoken();
+
+            // Edit draft (e.g. from phone)
+            widget.DraftText = "Edited text from phone.";
+
+            // Reread starts automatically and completes
+            await speech.WaitUntilSpoken();
+            Assert.Equal("Edited text from phone.", speech.LastDraft);
+
+            // Spoken approval "yes" arrives
+            approvalListener.EnqueueApproval(MakeAudio("yes"));
+
+            // Wait for spoken approval to execute ConfirmAsync()
+            var startEvt = await startingTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("Edited text from phone.", startEvt.Text);
+            Assert.Equal("claude", startEvt.DestinationId);
+
+            var compEvt = await completedTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("Edited text from phone.", compEvt.Text);
+            Assert.True(compEvt.Result.Succeeded);
+
+            Assert.Single(claude.Sent);
+            Assert.Equal("Edited text from phone.", claude.Sent[0]);
+        }
+    }
+
     /// <summary>
     /// Requirement 9: Destination prefixes resolve only uniquely and strip prefix before cleanup.
     /// </summary>

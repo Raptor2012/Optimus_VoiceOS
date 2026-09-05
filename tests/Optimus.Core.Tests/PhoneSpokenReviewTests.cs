@@ -138,6 +138,54 @@ public sealed class PhoneSpokenReviewTests
         Assert.Equal("cancel", JsonState(cancelFrame));
     }
 
+    [Fact]
+    public async Task RepeatedReview_FollowedByNarration_UsesStrictlyIncreasingGenerations()
+    {
+        int port = FreePort();
+        using var endpoint = new PhoneEndpoint(port, IPAddress.Loopback);
+        endpoint.Start();
+
+        using var phone = new TcpClient();
+        await phone.ConnectAsync(IPAddress.Loopback, port);
+        await WaitUntilAsync(() => endpoint.IsConnected);
+
+        using var review = new PhoneSpokenReview(
+            (text, token) => Task.FromResult(new SpeechSegment(text, new byte[4], 22050, 5, 10)),
+            endpoint);
+
+        var firstSpeak = review.SpeakReviewAsync("First draft", "Claude");
+        long firstGen = endpoint.CurrentPlaybackGeneration;
+
+        NetworkStream stream = phone.GetStream();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var frame = await PhoneFraming.ReadAsync(stream, timeout.Token);
+        while (frame != null && (frame.Value.Kind != PhoneFrameKind.Json || JsonType(frame) != "playback" || JsonState(frame) != "end"))
+        {
+            frame = await PhoneFraming.ReadAsync(stream, timeout.Token);
+        }
+        byte[] drainJson = Encoding.UTF8.GetBytes($"{{\"t\":\"playbackDrained\",\"generation\":{firstGen}}}");
+        await stream.WriteAsync(PhoneFraming.Encode(PhoneFrameKind.Json, drainJson), timeout.Token);
+        await firstSpeak;
+
+        // Second review
+        var secondSpeak = review.SpeakReviewAsync("Second draft", "Claude");
+        long secondGen = endpoint.CurrentPlaybackGeneration;
+        Assert.True(secondGen > firstGen);
+
+        frame = await PhoneFraming.ReadAsync(stream, timeout.Token);
+        while (frame != null && (frame.Value.Kind != PhoneFrameKind.Json || JsonType(frame) != "playback" || JsonState(frame) != "end"))
+        {
+            frame = await PhoneFraming.ReadAsync(stream, timeout.Token);
+        }
+        drainJson = Encoding.UTF8.GetBytes($"{{\"t\":\"playbackDrained\",\"generation\":{secondGen}}}");
+        await stream.WriteAsync(PhoneFraming.Encode(PhoneFrameKind.Json, drainJson), timeout.Token);
+        await secondSpeak;
+
+        // Next generation used for narration
+        long narrationGen = endpoint.NextPlaybackGeneration();
+        Assert.True(narrationGen > secondGen);
+    }
+
     private static string JsonState((PhoneFrameKind Kind, byte[] Payload)? frame)
     {
         Assert.NotNull(frame);

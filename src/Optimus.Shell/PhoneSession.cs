@@ -32,6 +32,7 @@ public sealed class PhoneSession : IDisposable
     private readonly VoiceDestinationResolver? _destinationResolver;
     private readonly Action<string, string, string, string?>? _onDraftWithDestination;
     private readonly Action<string>? _onDestinationSelected;
+    private readonly Action<string>? _onDraftEdited;
     private readonly object _lock = new();
 
     private MemoryStream? _buffer;
@@ -51,7 +52,8 @@ public sealed class PhoneSession : IDisposable
         Action<string, string, SendResult>? onSendCompleted = null,
         VoiceDestinationResolver? destinationResolver = null,
         Action<string, string, string, string?>? onDraftWithDestination = null,
-        Action<string>? onDestinationSelected = null)
+        Action<string>? onDestinationSelected = null,
+        Action<string>? onDraftEdited = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
@@ -64,6 +66,7 @@ public sealed class PhoneSession : IDisposable
         _destinationResolver = destinationResolver ?? (destinations != null ? CreateResolver(destinations) : null);
         _onDraftWithDestination = onDraftWithDestination;
         _onDestinationSelected = onDestinationSelected;
+        _onDraftEdited = onDraftEdited;
 
         _endpoint.ConnectionChanged += OnConnectionChanged;
         _endpoint.CaptureStarted += OnCaptureStarted;
@@ -73,7 +76,11 @@ public sealed class PhoneSession : IDisposable
         _endpoint.ConfirmRequested += OnConfirmRequested;
         _endpoint.CancelRequested += OnCancelRequested;
         _endpoint.DestinationSelected += OnDestinationSelected;
+        _endpoint.DraftEdited += OnDraftEdited;
     }
+
+    private void OnDraftEdited(object? sender, string text) =>
+        _onDraftEdited?.Invoke(text);
 
     private void OnDestinationSelected(object? sender, string destinationId) =>
         _onDestinationSelected?.Invoke(destinationId);
@@ -194,6 +201,42 @@ public sealed class PhoneSession : IDisposable
                 ? $"Phone prompt sent to {adapter.DisplayName}"
                 : $"Phone prompt NOT sent: {result.Detail}");
         });
+    }
+
+    /// <summary>
+    /// Notifies the phone that a send has begun on the PC (via spoken confirmation or button).
+    /// Sets the send guard to prevent double sends from the phone and updates phone status.
+    /// </summary>
+    public void NotifySending(string text, string destinationId, string destinationName)
+    {
+        Interlocked.Exchange(ref _sendInProgress, 1);
+        _endpoint.SendStatus("sending", $"Sending to {destinationName}...");
+    }
+
+    /// <summary>
+    /// Notifies the phone that a PC-initiated send has completed, clearing the phone draft on success.
+    /// </summary>
+    public void NotifySendCompleted(string text, string destinationName, SendResult result)
+    {
+        if (!result.Succeeded)
+        {
+            Interlocked.Exchange(ref _sendInProgress, 0);
+        }
+
+        _endpoint.SendSendResult(result.Succeeded, destinationName, result.Detail);
+        _endpoint.SendStatus(result.Succeeded ? "sent" : "error", result.Detail);
+        _onStatus?.Invoke(result.Succeeded
+            ? $"Prompt sent to {destinationName}"
+            : $"Prompt NOT sent: {result.Detail}");
+    }
+
+    /// <summary>
+    /// Notifies the phone that the draft was cancelled on PC.
+    /// </summary>
+    public void NotifyCancelled()
+    {
+        Interlocked.Exchange(ref _sendInProgress, 0);
+        _endpoint.SendStatus("idle", "Cancelled");
     }
 
     private void OnConnectionChanged(object? sender, PhoneConnectionEventArgs e)
@@ -384,6 +427,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.ConfirmRequested -= OnConfirmRequested;
         _endpoint.CancelRequested -= OnCancelRequested;
         _endpoint.DestinationSelected -= OnDestinationSelected;
+        _endpoint.DraftEdited -= OnDraftEdited;
 
         lock (_lock)
         {

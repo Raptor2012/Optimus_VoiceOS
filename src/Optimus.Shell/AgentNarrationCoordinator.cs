@@ -21,6 +21,7 @@ public sealed class AgentNarrationCoordinator : IDisposable
     private CancellationTokenSource? _runCts;
     private WaveOutPlayer? _pcPlayer;
     private long _generation;
+    private long _activeGeneration;
     private bool _disposed;
 
     public AgentNarrationCoordinator(
@@ -49,8 +50,14 @@ public sealed class AgentNarrationCoordinator : IDisposable
         observer.Poll(); // Existing conversation history must never be narrated as new activity.
 
         var cts = new CancellationTokenSource();
-        long generation = Interlocked.Increment(ref _generation);
-        lock (_gate) _runCts = cts;
+        long generation = _phone != null
+            ? _phone.NextPlaybackGeneration()
+            : Interlocked.Increment(ref _generation);
+        lock (_gate)
+        {
+            _runCts = cts;
+            _activeGeneration = generation;
+        }
 
         _status($"Watching {adapter.DisplayName} for visible updates");
         _ = Task.Run(() => RunAsync(observer, adapter.DisplayName, speakOnPhone, confirmedPrompt.Trim(), generation, cts.Token));
@@ -59,18 +66,20 @@ public sealed class AgentNarrationCoordinator : IDisposable
     public void Cancel()
     {
         CancellationTokenSource? old;
+        long gen;
         lock (_gate)
         {
             old = _runCts;
             _runCts = null;
+            gen = _activeGeneration;
         }
 
         old?.Cancel();
         old?.Dispose();
         _pcPlayer?.Stop();
-        if (_phone?.IsConnected == true)
+        if (_phone?.IsConnected == true && gen > 0)
         {
-            try { _phone.CancelPlayback(Volatile.Read(ref _generation)); }
+            try { _phone.CancelPlayback(gen); }
             catch (InvalidOperationException) { }
         }
     }

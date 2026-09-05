@@ -1,4 +1,4 @@
-﻿namespace Optimus.Core.Speech;
+namespace Optimus.Core.Speech;
 
 using System;
 using System.Collections.Generic;
@@ -21,7 +21,7 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
     private readonly object _lock = new();
 
     private CancellationTokenSource? _cts;
-    private long _generation;
+    private long _activeGeneration;
     private bool _disposed;
 
     public bool IsSpeaking { get; private set; }
@@ -69,7 +69,8 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
         }
 
         CancellationToken token = linked.Token;
-        long generation = Interlocked.Increment(ref _generation);
+        long generation = _phoneEndpoint.NextPlaybackGeneration();
+        Volatile.Write(ref _activeGeneration, generation);
 
         IReadOnlyList<string> lines;
         try
@@ -182,7 +183,7 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
 
         try
         {
-            _phoneEndpoint.CancelPlayback(Volatile.Read(ref _generation));
+            _phoneEndpoint.CancelPlayback(Volatile.Read(ref _activeGeneration));
         }
         catch
         {
@@ -206,7 +207,7 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
 
         try
         {
-            _phoneEndpoint.CancelPlayback(Volatile.Read(ref _generation));
+            _phoneEndpoint.CancelPlayback(Volatile.Read(ref _activeGeneration));
         }
         catch
         {

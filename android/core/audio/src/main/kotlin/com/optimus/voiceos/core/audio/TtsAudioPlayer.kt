@@ -141,6 +141,18 @@ class TtsAudioPlayer internal constructor(
         }
     }
 
+    fun reset() {
+        val oldSink: StreamingPcmSink?
+        synchronized(lock) {
+            oldSink = sink
+            sink = null
+            generation = -1L
+            nextSequence = 0
+            setActive(false)
+        }
+        try { oldSink?.stop() } catch (_: Exception) { }
+    }
+
     private fun cancelLocked(forGeneration: Long) {
         if (forGeneration != generation) return
         generation++ // invalidates already queued work immediately

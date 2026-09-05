@@ -182,6 +182,10 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
 
     fun refreshDestinations() = sendJson(JSONObject().put("t", "refreshDestinations"))
 
+    fun editDraft(text: String) = sendJson(
+        JSONObject().put("t", "editDraft").put("text", text)
+    )
+
     /**
      * Confirms the draft, sending the exact text currently on screen.
      *

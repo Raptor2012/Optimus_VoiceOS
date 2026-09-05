@@ -149,7 +149,13 @@ public partial class App : Application
                     {
                         viewModel.SelectedDestination = match;
                     }
-                }));
+                }),
+                onDraftEdited: text => Dispatcher.Invoke(() =>
+                    viewModel.DraftText = text));
+
+            _viewModel.SendingStarted += (_, ev) => _phoneSession?.NotifySending(ev.Text, ev.DestinationId, ev.DestinationName);
+            _viewModel.SendCompleted += (_, ev) => _phoneSession?.NotifySendCompleted(ev.Text, ev.DestinationName, ev.Result);
+            _viewModel.Cancelled += (_, _) => _phoneSession?.NotifyCancelled();
 
             if (_ttsSynthesizer != null)
             {

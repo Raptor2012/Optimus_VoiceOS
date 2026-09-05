@@ -210,6 +210,32 @@ public class PhoneEndpointTests : IDisposable
         Assert.True(await WithTimeout(started.Task), "Connection did not survive unknown input.");
     }
 
+    [Fact]
+    public async Task EditDraft_RaisesDraftEditedEvent()
+    {
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+
+        var edited = new TaskCompletionSource<string>();
+        _endpoint.DraftEdited += (_, text) => edited.TrySetResult(text);
+
+        await SendJsonAsync(stream, "{\"t\":\"editDraft\",\"text\":\"updated draft from phone\"}");
+
+        Assert.Equal("updated draft from phone", await edited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public void NextPlaybackGeneration_IncrementsMonotonically()
+    {
+        long gen1 = _endpoint.NextPlaybackGeneration();
+        long gen2 = _endpoint.NextPlaybackGeneration();
+        long gen3 = _endpoint.NextPlaybackGeneration();
+
+        Assert.True(gen1 < gen2);
+        Assert.True(gen2 < gen3);
+        Assert.Equal(gen3, _endpoint.CurrentPlaybackGeneration);
+    }
+
     private async Task<TcpClient> DialAsync()
     {
         var client = new TcpClient();

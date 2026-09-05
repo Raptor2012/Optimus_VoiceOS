@@ -274,6 +274,58 @@ public class PhoneConfirmTests : IDisposable
         Assert.Empty(claude.Sent);
     }
 
+    [Fact]
+    public async Task EditDraft_ForwardsToOnDraftEdited()
+    {
+        var edited = new TaskCompletionSource<string>();
+        using var session = new PhoneSession(
+            _endpoint,
+            pipeline: null,
+            destinations: null,
+            onDraftEdited: text => edited.TrySetResult(text));
+
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+
+        await SendAsync(stream, "{\"t\":\"editDraft\",\"text\":\"new edited text from phone\"}");
+
+        Assert.Equal("new edited text from phone", await edited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task NotifySending_BlocksPhoneSendAndReportsStatus()
+    {
+        var claude = new RecordingAdapter("claude", "Claude", ready: true);
+        var registry = new DestinationRegistry(new IDestinationAdapter[] { claude });
+
+        using var session = new PhoneSession(_endpoint, pipeline: null, destinations: registry);
+        using TcpClient phone = await DialAsync();
+        NetworkStream stream = phone.GetStream();
+        await DrainAsync(stream, 2); // status + destinations
+
+        // PC spoken approval starts sending
+        session.NotifySending("Draft text", "claude", "Claude");
+
+        JsonElement sendingStatus = await ReadUntilAsync(stream, "status");
+        Assert.Equal("sending", sendingStatus.GetProperty("state").GetString());
+
+        // Phone attempts to send while send in progress
+        await SendAsync(stream, "{\"t\":\"confirm\",\"destinationId\":\"claude\",\"text\":\"Second send\"}");
+
+        JsonElement rejectedStatus = await ReadUntilAsync(stream, "status");
+        Assert.Equal("sending", rejectedStatus.GetProperty("state").GetString());
+        Assert.Contains("already in progress", rejectedStatus.GetProperty("line").GetString());
+
+        // Complete the send
+        session.NotifySendCompleted("Draft text", "Claude", new SendResult(SendStatus.Sent, "delivered", 10));
+
+        JsonElement sendResult = await ReadUntilAsync(stream, "sendResult");
+        Assert.True(sendResult.GetProperty("ok").GetBoolean());
+
+        JsonElement sentStatus = await ReadUntilAsync(stream, "status");
+        Assert.Equal("sent", sentStatus.GetProperty("state").GetString());
+    }
+
     private async Task<TcpClient> DialAsync()
     {
         var client = new TcpClient();
