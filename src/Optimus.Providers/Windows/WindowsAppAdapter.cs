@@ -3,6 +3,7 @@ namespace Optimus.Providers.Windows;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -219,6 +220,18 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
                     stopwatch.ElapsedMilliseconds);
             }
 
+            // Raising the window leaves focus wherever the application last put it, which is
+            // usually not the message box. The box is located inside the window the user already
+            // bound, never across windows, and an ambiguous result is refused rather than guessed.
+            if (!TryFocusMessageBox(target, out string boxDetail))
+            {
+                stopwatch.Stop();
+                return new SendResult(
+                    SendStatus.InputRejected,
+                    $"Could not put the cursor in {DisplayName}'s message box. Nothing was typed. {boxDetail}",
+                    stopwatch.ElapsedMilliseconds);
+            }
+
             // Focusing the window is not the same as focusing its message box. Typing into a
             // focused list does type-ahead navigation instead, which moves the application
             // somewhere the user did not ask to go and loses the prompt entirely.
@@ -418,6 +431,100 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
     /// Types the draft as Unicode keystrokes, keeping newlines as Shift+Enter so an embedded
     /// line break cannot submit the prompt early.
     /// </summary>
+    /// <summary>
+    /// Puts the caret in the bound window's message box, so typing cannot land on a list.
+    /// </summary>
+    /// <remarks>
+    /// A message box is identified structurally rather than by name: the element must be
+    /// keyboard focusable, enabled, carry a writable value, and occupy real screen space. Apps
+    /// label it differently — Antigravity exposes a combo box called "Message input" rather than
+    /// an edit control — but all of them satisfy those four properties, and decorations like a
+    /// hidden type-ahead menu do not. Several matches means the window is not understood well
+    /// enough to type into, so the send is refused instead of picking one.
+    /// </remarks>
+    private static bool TryFocusMessageBox(WindowCandidate target, out string detail)
+    {
+        try
+        {
+            AutomationElement root = AutomationElement.FromHandle(target.Hwnd);
+
+            // Property conditions are unreliable on these applications' trees: asking the
+            // provider for keyboard-focusable descendants returns a handful of elements and
+            // misses the message box entirely. Reading every descendant and filtering here finds
+            // it in all three, at the cost of one full tree walk per send.
+            AutomationElementCollection descendants = root.FindAll(TreeScope.Descendants, Condition.TrueCondition);
+
+            var boxes = new List<AutomationElement>();
+            foreach (AutomationElement element in descendants)
+            {
+                AutomationElement.AutomationElementInformation info = element.Current;
+                if (!info.IsKeyboardFocusable || !info.IsEnabled || info.IsPassword)
+                {
+                    continue;
+                }
+
+                if (!element.TryGetCurrentPattern(ValuePattern.Pattern, out object? value) ||
+                    value is not ValuePattern pattern ||
+                    pattern.Current.IsReadOnly)
+                {
+                    continue;
+                }
+
+                System.Windows.Rect bounds = info.BoundingRectangle;
+                if (bounds.IsEmpty || double.IsInfinity(bounds.Width) || bounds.Width <= 1 || bounds.Height <= 1)
+                {
+                    continue;
+                }
+
+                boxes.Add(element);
+            }
+
+            if (boxes.Count == 0)
+            {
+                detail = "No message box was found in the bound window.";
+                return false;
+            }
+
+            AutomationElement? box = boxes.Count == 1
+                ? boxes[0]
+                // Some windows hold a second writable surface, such as a document editor beside
+                // the composer. Rather than pick by size or position, defer to the application's
+                // own answer to where typing goes.
+                : boxes.FirstOrDefault(candidate => candidate.Current.HasKeyboardFocus);
+
+            if (box == null)
+            {
+                detail = $"{boxes.Count} possible message boxes were found and none holds the caret; "
+                    + "click the one to use, then confirm again.";
+                return false;
+            }
+
+            if (!box.Current.HasKeyboardFocus)
+            {
+                box.SetFocus();
+                Thread.Sleep(DeliveryCheckIntervalMs);
+            }
+
+            detail = string.Empty;
+            return true;
+        }
+        catch (ElementNotAvailableException)
+        {
+            detail = "The message box went away while it was being located.";
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            detail = "The application refused to move the caret into its message box.";
+            return false;
+        }
+        catch (COMException)
+        {
+            detail = "The application did not answer an accessibility request.";
+            return false;
+        }
+    }
+
     /// <summary>
     /// True when the element with keyboard focus is a text box belonging to the target process.
     /// </summary>
