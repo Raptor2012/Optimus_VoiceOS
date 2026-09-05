@@ -50,17 +50,57 @@ public sealed class ApprovalCommandClassifierTests
     public void Classify_AcceptsEveryUseOriginalVariant(string transcript) =>
         Assert.Equal(ApprovalCommand.UseOriginal, ApprovalCommandClassifier.Classify(transcript));
 
+    // The vocabulary was once exact-phrase only, so "please send" and "cancel that" were
+    // rejected. Dogfooding showed that made the approval step unusable: replies echo the spoken
+    // question rather than reciting a keyword. Those now classify, and the cases below are the
+    // ones that must still be refused — no vocabulary word, or a word withholding approval.
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ... ")]
-    [InlineData("please send")]
-    [InlineData("yes send")]
-    [InlineData("confirm it")]
-    [InlineData("do it now")]
-    [InlineData("cancel that")]
     [InlineData("maybe")]
     [InlineData("wait")]
+    [InlineData("not sure")]
     public void Classify_RejectsAnythingOutsideTheFiniteVocabulary(string? transcript) =>
         Assert.Equal(ApprovalCommand.Unknown, ApprovalCommandClassifier.Classify(transcript));
+
+    [Theory]
+    // People echo the question rather than reciting a keyword.
+    [InlineData("send this to Claude")]
+    [InlineData("yeah send it")]
+    [InlineData("okay send")]
+    [InlineData("Sent.")]
+    [InlineData("yes please send it to Antigravity")]
+    [InlineData("go ahead")]
+    public void NaturalApprovals_AreUnderstood(string spoken) =>
+        Assert.Equal(ApprovalCommand.Affirmative, ApprovalCommandClassifier.Classify(spoken));
+
+    [Theory]
+    // Every one of these contains an approval word and must still never approve.
+    [InlineData("don't send that")]
+    [InlineData("do not send this to Claude")]
+    [InlineData("no, don't send it")]
+    [InlineData("wait, don't send")]
+    [InlineData("not yet")]
+    [InlineData("hold on")]
+    public void RefusalsContainingApprovalWords_NeverApprove(string spoken) =>
+        Assert.NotEqual(ApprovalCommand.Affirmative, ApprovalCommandClassifier.Classify(spoken));
+
+    [Theory]
+    [InlineData("cancel that", ApprovalCommand.Cancel)]
+    [InlineData("no cancel it", ApprovalCommand.Cancel)]
+    [InlineData("let me say that again", ApprovalCommand.Redictate)]
+    [InlineData("use the original please", ApprovalCommand.UseOriginal)]
+    public void OtherRepliesKeepTheirMeaning(string spoken, ApprovalCommand expected) =>
+        Assert.Equal(expected, ApprovalCommandClassifier.Classify(spoken));
+
+    [Theory]
+    // An approval word buried mid-sentence is not an approval. The recoverable outcomes are
+    // allowed to match loosely; only approval has to lead the reply.
+    [InlineData("add a send button to the page")]
+    [InlineData("what time is it")]
+    [InlineData("add a retry to fetchUser")]
+    [InlineData("")]
+    public void SpeechThatIsNotAnApproval_NeverApproves(string spoken) =>
+        Assert.NotEqual(ApprovalCommand.Affirmative, ApprovalCommandClassifier.Classify(spoken));
 }
