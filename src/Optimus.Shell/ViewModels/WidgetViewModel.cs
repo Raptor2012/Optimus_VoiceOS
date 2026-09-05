@@ -1053,11 +1053,21 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(NeedsWindowChoice));
     }
 
+    /// <summary>
+    /// Reports a held capture. Session listening shares the same device and raises the same
+    /// event, but it is not a hold and must not be announced as one.
+    /// </summary>
+    /// <remarks>
+    /// Treating it as a hold wedged the widget: the state moved to <c>Listening</c>, which the
+    /// session does not consider a resting state, so the loop stopped listening and nothing
+    /// released the state again. The controller only reports <c>IsCapturing</c> while the key
+    /// is actually down, which is the distinction that matters here.
+    /// </remarks>
     private void OnCaptureStateChanged(object? sender, CaptureStateChangedEventArgs e)
     {
         _dispatchAction(() =>
         {
-            if (e.IsCapturing)
+            if (e.IsCapturing && _controller?.IsCapturing == true)
             {
                 AgentRunCancelled?.Invoke(this, EventArgs.Empty);
                 State = WidgetState.Listening;
@@ -1129,6 +1139,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (!CanListenInSession())
             {
+                _dispatchAction(ReleaseStaleListeningState);
+
                 try
                 {
                     await Task.Delay(150, token).ConfigureAwait(false);
@@ -1197,6 +1209,30 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
 
             ProcessAudioBytes(audio, generation, processingToken);
         }
+    }
+
+    /// <summary>
+    /// Frees a listening state that nothing is actually listening for.
+    /// </summary>
+    /// <remarks>
+    /// A hold that never reports its release, or a capture announced by something that has since
+    /// gone away, would otherwise park the widget in a state the session refuses to act from.
+    /// Phone captures are left alone; they have their own recovery and their own owner.
+    /// </remarks>
+    private void ReleaseStaleListeningState()
+    {
+        if (State != WidgetState.Listening ||
+            _draftOriginPhone ||
+            _controller?.IsCapturing == true ||
+            _controller?.AudioCaptureService.IsCapturing == true)
+        {
+            return;
+        }
+
+        State = HasDraft ? WidgetState.Confirm : WidgetState.Idle;
+        StatusLine = HasDraft
+            ? "Review the draft, then confirm"
+            : $"Ready — Hold {HotkeyLabel} to speak";
     }
 
     /// <summary>The session may only take the microphone when nothing else needs it.</summary>

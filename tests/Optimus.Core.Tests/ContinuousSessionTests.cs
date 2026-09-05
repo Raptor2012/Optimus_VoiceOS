@@ -4,7 +4,10 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Optimus.Core.Audio;
+using Optimus.Core.Hotkeys;
 using Optimus.Core.Voice;
+using Optimus.Shell.Models;
+using Optimus.Shell.ViewModels;
 using Xunit;
 
 /// <summary>
@@ -84,6 +87,41 @@ public class ContinuousSessionTests
 
         Assert.True(capture.IsCapturing);
         Assert.NotEmpty(capture.StopCapture());
+    }
+
+    [Fact]
+    public void SessionOpeningTheMicrophone_IsNotReportedAsAHeldKey()
+    {
+        using var hotkey = new MockHotkeyService();
+        using var capture = new InMemoryAudioCapture();
+        using var controller = new PushToTalkController(hotkey, capture, TimeSpan.Zero);
+        using var viewModel = new WidgetViewModel(action => action());
+        viewModel.AttachController(controller);
+        controller.Start();
+
+        // Session listening shares the device, so starting it raises the same capture event a
+        // hold does. Announcing it as a hold parked the widget in a state the session refuses to
+        // act from, and nothing released it again.
+        capture.StartCapture();
+
+        Assert.NotEqual(WidgetState.Listening, viewModel.State);
+        Assert.DoesNotContain("release key", viewModel.StatusLine, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ActualHold_IsStillReportedAsAHeldKey()
+    {
+        using var hotkey = new MockHotkeyService();
+        using var capture = new InMemoryAudioCapture();
+        using var controller = new PushToTalkController(hotkey, capture, TimeSpan.Zero);
+        using var viewModel = new WidgetViewModel(action => action());
+        viewModel.AttachController(controller);
+        controller.Start();
+
+        hotkey.SimulatePress();
+
+        Assert.Equal(WidgetState.Listening, viewModel.State);
+        Assert.Contains("release key", viewModel.StatusLine, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
