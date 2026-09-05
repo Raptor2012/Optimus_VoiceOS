@@ -104,12 +104,28 @@ public sealed class AgentNarrationCoordinator : IDisposable
                 {
                     // Sending makes the user's own prompt appear in the conversation. It is not
                     // agent activity and must not be echoed back as Comprehensive narration.
-                    if (string.Equals(update.Text.Trim(), confirmedPrompt, StringComparison.Ordinal))
+                    string trimmed = update.Text.Trim();
+                    VisibleAgentUpdate actualUpdate = update;
+                    if (!string.IsNullOrEmpty(confirmedPrompt))
                     {
-                        continue;
+                        if (string.Equals(trimmed, confirmedPrompt, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (trimmed.StartsWith(confirmedPrompt, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string remainder = trimmed[confirmedPrompt.Length..].Trim();
+                            if (remainder.Length == 0)
+                            {
+                                continue;
+                            }
+                            actualUpdate = update with { Text = remainder };
+                        }
                     }
+
                     scheduler.Options = _options();
-                    scheduler.Enqueue(ToNarrationEvent(runId, update));
+                    scheduler.Enqueue(ToNarrationEvent(runId, actualUpdate));
                 }
             }
             catch (OperationCanceledException) { }
@@ -154,10 +170,11 @@ public sealed class AgentNarrationCoordinator : IDisposable
             VisibleAgentActivity.ToolOrSkill => NarrationEventType.ToolCall,
             VisibleAgentActivity.FinalResponseCandidate => NarrationEventType.FinalResponse,
             _ when update.Text.TrimEnd().EndsWith('?') => NarrationEventType.AgentQuestion,
-            _ => NarrationEventType.Progress
+            VisibleAgentActivity.VisibleText => NarrationEventType.FinalResponse,
+            _ => NarrationEventType.FinalResponse
         };
 
-        // A few high-value transitions remain audible in Concise mode.
+        // Thought headlines and high-value transitions remain audible in Concise mode.
         if (type == NarrationEventType.Progress && ContainsTransition(update.Text))
         {
             type = NarrationEventType.StatusTransition;
@@ -171,13 +188,42 @@ public sealed class AgentNarrationCoordinator : IDisposable
             isStreamingFragment: type == NarrationEventType.Progress);
     }
 
-    private static bool ContainsTransition(string text) =>
-        text.Contains("planning", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("editing", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("running tests", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("tests passed", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("tests failed", StringComparison.OrdinalIgnoreCase) ||
-        text.Contains("completed", StringComparison.OrdinalIgnoreCase);
+    private static bool ContainsTransition(string text)
+    {
+        string cleaned = text.Trim().TrimStart('>', '*', '-', '•', '[', '(', ' ', '#');
+        if (cleaned.StartsWith("thought", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("thinking", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("interpreting", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("planning", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("reasoning", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("analyzing", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Contains("running tests", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Contains("tests passed", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Contains("tests failed", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Contains("build succeeded", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Contains("build failed", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.Equals("completed", StringComparison.OrdinalIgnoreCase) ||
+            cleaned.StartsWith("completed ", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (string line in text.Split('\n'))
+        {
+            string lineClean = line.Trim().TrimStart('>', '*', '-', '•', '[', '(', ' ', '#');
+            if (lineClean.StartsWith("thought", StringComparison.OrdinalIgnoreCase) ||
+                lineClean.StartsWith("thinking", StringComparison.OrdinalIgnoreCase) ||
+                lineClean.StartsWith("interpreting", StringComparison.OrdinalIgnoreCase) ||
+                lineClean.StartsWith("planning", StringComparison.OrdinalIgnoreCase) ||
+                lineClean.StartsWith("reasoning", StringComparison.OrdinalIgnoreCase) ||
+                lineClean.StartsWith("analyzing", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private void PlayOnPc(SpeechSegment segment, CancellationToken token)
     {

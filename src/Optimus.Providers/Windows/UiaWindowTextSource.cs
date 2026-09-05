@@ -56,17 +56,27 @@ public sealed class UiaWindowTextSource : IWindowTextSource
 
     private static string ReadText(AutomationElement element)
     {
+        string raw;
         if (element.TryGetCurrentPattern(TextPattern.Pattern, out object pattern))
         {
-            return ((TextPattern)pattern).DocumentRange.GetText(-1);
+            raw = ((TextPattern)pattern).DocumentRange.GetText(-1);
         }
-
-        if (element.TryGetCurrentPattern(ValuePattern.Pattern, out pattern))
+        else if (element.TryGetCurrentPattern(ValuePattern.Pattern, out pattern))
         {
-            return ((ValuePattern)pattern).Current.Value;
+            raw = ((ValuePattern)pattern).Current.Value;
+        }
+        else
+        {
+            raw = element.Current.Name ?? string.Empty;
         }
 
-        return element.Current.Name ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return string.Empty;
+        }
+
+        return raw.Replace("\uFFFC", "", StringComparison.Ordinal)
+                  .Replace("\uFFFD", "", StringComparison.Ordinal);
     }
 
     private static string BuildKey(

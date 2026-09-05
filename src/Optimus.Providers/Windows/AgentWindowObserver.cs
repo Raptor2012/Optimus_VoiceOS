@@ -155,7 +155,9 @@ public sealed class AgentWindowObserver
             return VisibleAgentActivity.ToolOrSkill;
         }
 
-        if (ContainsAny(fullText, "planning", "thinking", "editing", "running tests", "working", "searching"))
+        string trimmed = fullText.Trim().TrimStart('>', '*', '-', '•', '[', '(', ' ', '#');
+        if (StartsWithAny(trimmed, "planning", "thinking", "editing", "running tests", "working", "searching", "thought", "reasoning", "interpreting", "analyzing") ||
+            (fullText.Length < 120 && ContainsAny(fullText, "running tests", "thought for", "thinking process")))
         {
             return VisibleAgentActivity.Progress;
         }
@@ -170,12 +172,17 @@ public sealed class AgentWindowObserver
         return VisibleAgentActivity.VisibleText;
     }
 
+    private static bool StartsWithAny(string value, params string[] prefixes) =>
+        prefixes.Any(prefix => value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
     private static bool ContainsAny(string value, params string[] needles) =>
         needles.Any(needle => value.Contains(needle, StringComparison.OrdinalIgnoreCase));
 
     private static string Normalize(string text) =>
         string.Join('\n', text.Replace("\r\n", "\n", StringComparison.Ordinal)
                               .Replace('\r', '\n')
+                              .Replace("\uFFFC", "", StringComparison.Ordinal)
+                              .Replace("\uFFFD", "", StringComparison.Ordinal)
                               .Split('\n')
                               .Select(line => line.Trim())
                               .Where(line => line.Length > 0));

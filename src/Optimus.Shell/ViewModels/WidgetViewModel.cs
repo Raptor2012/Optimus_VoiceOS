@@ -579,10 +579,6 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         IsDraftEditable = false;
         State = WidgetState.Sending;
         StatusLine = $"Sending to {destinationName} from phone...";
-        if (SelectedDestination != null)
-        {
-            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(SelectedDestination.Adapter, true, text));
-        }
     }
 
     /// <summary>Applies the adapter's real outcome to the same draft shown on both devices.</summary>
@@ -596,6 +592,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             ErrorMessage = string.Empty;
             State = WidgetState.Sent;
             StatusLine = $"Sent to {destinationName} ({result.ElapsedMilliseconds} ms)";
+            if (SelectedDestination != null)
+            {
+                AgentRunStarting?.Invoke(this, new AgentRunEventArgs(SelectedDestination.Adapter, true, text));
+            }
             return;
         }
 
@@ -729,7 +729,6 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             State = WidgetState.Sending;
             IsDraftEditable = false;
             StatusLine = $"Sending to {destination.DisplayName}...";
-            AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
             SendingStarted?.Invoke(this, new WidgetSendStartingEventArgs(confirmed.Text, destination.DestinationId, destination.DisplayName));
 
             SendResult result;
@@ -754,6 +753,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 StatusLine = $"Sent to {destination.DisplayName} ({result.ElapsedMilliseconds} ms)";
                 LastSentText = confirmed.Text;
                 ErrorMessage = string.Empty;
+                AgentRunStarting?.Invoke(this, new AgentRunEventArgs(destination.Adapter, _draftOriginPhone, draftSnapshot));
                 _controller?.Start();
                 return;
             }
