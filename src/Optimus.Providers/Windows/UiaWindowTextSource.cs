@@ -10,7 +10,6 @@ public sealed class UiaWindowTextSource : IWindowTextSource
 {
     private static readonly Condition TextControls = new OrCondition(
         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text),
-        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document),
         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
 
     public IReadOnlyList<VisibleTextNode> Read(IntPtr hwnd)
@@ -38,6 +37,12 @@ public sealed class UiaWindowTextSource : IWindowTextSource
                 string automationId = element.Current.AutomationId ?? string.Empty;
                 string name = element.Current.Name ?? string.Empty;
                 string controlType = element.Current.ControlType.ProgrammaticName ?? string.Empty;
+
+                if (IsSidebarOrChrome(automationId, name, controlType))
+                {
+                    continue;
+                }
+
                 string key = BuildKey(element, automationId, controlType, index);
                 result.Add(new VisibleTextNode(key, text, name, automationId, controlType));
             }
@@ -101,5 +106,17 @@ public sealed class UiaWindowTextSource : IWindowTextSource
         return string.Create(
             CultureInfo.InvariantCulture,
             $"{controlType}:{automationId}:{fallbackIndex}");
+    }
+
+    private static bool IsSidebarOrChrome(string automationId, string name, string controlType)
+    {
+        string metadata = $"{automationId} {name} {controlType}";
+        return metadata.Contains("sidebar", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("activitybar", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("activity-bar", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("workbench.parts", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("titlebar", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("menubar", StringComparison.OrdinalIgnoreCase) ||
+               metadata.Contains("navigation", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -6,4 +6,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Optimus.Contracts\Optimus.Contracts.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Optimus.Providers.Tests" />
+  </ItemGroup>
 </Project>

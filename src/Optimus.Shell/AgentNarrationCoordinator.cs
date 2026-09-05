@@ -47,7 +47,6 @@ public sealed class AgentNarrationCoordinator : IDisposable
 
         Cancel();
         var observer = windows.CreateObserver();
-        observer.Poll(); // Existing conversation history must never be narrated as new activity.
 
         var cts = new CancellationTokenSource();
         long generation = _phone != null
@@ -92,6 +91,10 @@ public sealed class AgentNarrationCoordinator : IDisposable
         long generation,
         CancellationToken token)
     {
+        // Allow the target window to settle after prompt submission, then capture baseline on background thread.
+        await Task.Delay(150, token).ConfigureAwait(false);
+        observer.Poll();
+
         string runId = generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var scheduler = new NarrationScheduler(_options());
         using var observeCts = CancellationTokenSource.CreateLinkedTokenSource(token);

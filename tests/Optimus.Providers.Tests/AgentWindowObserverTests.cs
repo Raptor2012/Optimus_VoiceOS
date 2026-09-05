@@ -77,6 +77,25 @@ public sealed class AgentWindowObserverTests
         Assert.Null(source.LastHwnd);
     }
 
+    [Fact]
+    public void Poll_IgnoresSidebarHeadersAndTimestamps()
+    {
+        var source = new FakeTextSource(
+            new VisibleTextNode("sb-1", "Projects"),
+            new VisibleTextNode("sb-2", "Conversation History"),
+            new VisibleTextNode("sb-3", "Task T002 Scaffold Implementation now"),
+            new VisibleTextNode("sb-4", "Commit and Push Changes 4d"),
+            new VisibleTextNode("sb-5", "Settings"),
+            new VisibleTextNode("chat-1", "I updated the code in Optimus_VoiceOS."));
+        var observer = new AgentWindowObserver(BoundWindow, source, _ => true);
+
+        IReadOnlyList<VisibleAgentUpdate> updates = observer.Poll();
+
+        VisibleAgentUpdate single = Assert.Single(updates);
+        Assert.Equal("I updated the code in Optimus_VoiceOS.", single.Text);
+        Assert.Equal(VisibleAgentActivity.VisibleText, single.Activity);
+    }
+
     private sealed class FakeTextSource(params VisibleTextNode[] nodes) : IWindowTextSource
     {
         public IReadOnlyList<VisibleTextNode> Nodes { get; set; } = nodes;

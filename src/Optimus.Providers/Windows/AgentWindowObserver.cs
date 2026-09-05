@@ -81,7 +81,7 @@ public sealed class AgentWindowObserver
         foreach (VisibleTextNode node in nodes)
         {
             string text = Normalize(node.Text);
-            if (text.Length == 0 || !liveKeys.Add(node.Key))
+            if (text.Length == 0 || IsSidebarOrNavigationText(text) || !liveKeys.Add(node.Key))
             {
                 continue;
             }
@@ -108,7 +108,7 @@ public sealed class AgentWindowObserver
                 ? text[previous.Length..].Trim()
                 : text;
 
-            if (added.Length > 0)
+            if (added.Length > 0 && !IsSidebarOrNavigationText(added))
             {
                 updates.Add(new VisibleAgentUpdate(
                     added,
@@ -185,5 +185,57 @@ public sealed class AgentWindowObserver
                               .Replace("\uFFFD", "", StringComparison.Ordinal)
                               .Split('\n')
                               .Select(line => line.Trim())
-                              .Where(line => line.Length > 0));
+                              .Where(line => line.Length > 0 && !IsSidebarOrNavigationText(line)));
+
+    private static bool IsSidebarOrNavigationText(string text)
+    {
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0) return true;
+
+        if (string.Equals(trimmed, "Projects", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Conversation History", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Scheduled Tasks", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "New Conversation", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "+ New Conversation", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Settings", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Antigravity", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "File", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "View", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Window", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("See all", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (IsRelativeTimestamp(trimmed))
+        {
+            return true;
+        }
+
+        int lastSpace = trimmed.LastIndexOf(' ');
+        if (lastSpace >= 0)
+        {
+            string trailing = trimmed[(lastSpace + 1)..];
+            if (IsRelativeTimestamp(trailing))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsRelativeTimestamp(string s)
+    {
+        if (string.Equals(s, "now", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.Length is >= 2 and <= 5 && char.IsDigit(s[0]))
+        {
+            string suffix = s.TrimStart("0123456789".ToCharArray());
+            if (suffix is "s" or "m" or "h" or "d" or "w" or "mo" or "y")
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 }
