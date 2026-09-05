@@ -46,7 +46,7 @@ public sealed class AgentWindowObserver
     private readonly IWindowTextSource _textSource;
     private readonly Func<WindowCandidate, bool> _isWindowValid;
     private readonly Dictionary<string, string> _previousTextByNode = new(StringComparer.Ordinal);
-    private HashSet<string> _previousSnapshotTexts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _seenTexts = new(StringComparer.Ordinal);
 
     public AgentWindowObserver(WindowCandidate window)
         : this(window, new UiaWindowTextSource(), WindowFinder.IsStillValid)
@@ -65,11 +65,15 @@ public sealed class AgentWindowObserver
 
     public WindowCandidate Window => _window;
 
+    /// <summary>The number of live text nodes captured in the most recent poll.</summary>
+    public int CapturedNodeCount { get; private set; }
+
     /// <summary>Reads one snapshot. Repeated UI rerenders produce no duplicate updates.</summary>
     public IReadOnlyList<VisibleAgentUpdate> Poll()
     {
         if (!_isWindowValid(_window))
         {
+            CapturedNodeCount = 0;
             return Array.Empty<VisibleAgentUpdate>();
         }
 
@@ -92,7 +96,7 @@ public sealed class AgentWindowObserver
             _previousTextByNode[node.Key] = text;
 
             if (string.Equals(previous, text, StringComparison.Ordinal) ||
-                _previousSnapshotTexts.Contains(text))
+                _seenTexts.Contains(text))
             {
                 continue;
             }
@@ -100,13 +104,15 @@ public sealed class AgentWindowObserver
             // Coding apps often rerender the same assistant node while streaming. Emit only its
             // appended suffix so narration does not repeat the response from the beginning. If
             // the app replaced the UIA element, recover from the longest previous visible prefix.
-            previous ??= _previousSnapshotTexts
+            previous ??= _seenTexts
                 .Where(oldText => text.StartsWith(oldText, StringComparison.Ordinal))
                 .OrderByDescending(oldText => oldText.Length)
                 .FirstOrDefault();
             string added = previous != null && text.StartsWith(previous, StringComparison.Ordinal)
                 ? text[previous.Length..].Trim()
                 : text;
+
+            _seenTexts.Add(text);
 
             if (added.Length > 0 && !IsSidebarOrNavigationText(added))
             {
@@ -122,8 +128,7 @@ public sealed class AgentWindowObserver
             _previousTextByNode.Remove(staleKey);
         }
 
-        _previousSnapshotTexts = liveTexts;
-
+        CapturedNodeCount = liveTexts.Count;
         return updates;
     }
 
@@ -192,6 +197,19 @@ public sealed class AgentWindowObserver
         string trimmed = text.Trim();
         if (trimmed.Length == 0) return true;
 
+        // Single punctuation, navigation symbols, breadcrumb separators
+        if (trimmed.Length is 1 or 2 && trimmed.All(c => char.IsPunctuation(c) || char.IsSymbol(c) || c is '•' or '→' or '←' or '…'))
+        {
+            return true;
+        }
+
+        if (string.Equals(trimmed, "...", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "->", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "<-", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         if (string.Equals(trimmed, "Projects", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "Conversation History", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "Scheduled Tasks", StringComparison.OrdinalIgnoreCase) ||
@@ -200,9 +218,21 @@ public sealed class AgentWindowObserver
             string.Equals(trimmed, "Settings", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "Antigravity", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "File", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Edit", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Selection", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "View", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Go", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Run", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Terminal", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(trimmed, "Window", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.StartsWith("See all", StringComparison.OrdinalIgnoreCase))
+            string.Equals(trimmed, "Help", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Restart to Update", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Open IDE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Load older messages", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Load more", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "Show more", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("See all", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("See more", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -212,10 +242,15 @@ public sealed class AgentWindowObserver
             return true;
         }
 
+        if (IsClockTimestamp(trimmed))
+        {
+            return true;
+        }
+
         int lastSpace = trimmed.LastIndexOf(' ');
         if (lastSpace >= 0)
         {
-            string trailing = trimmed[(lastSpace + 1)..];
+            string trailing = trimmed[(lastSpace + 1)..].Trim();
             if (IsRelativeTimestamp(trailing))
             {
                 return true;
@@ -225,13 +260,36 @@ public sealed class AgentWindowObserver
         return false;
     }
 
+    private static bool IsClockTimestamp(string s)
+    {
+        if (s.Length is < 4 or > 10) return false;
+        int colon = s.IndexOf(':');
+        if (colon is < 1 or > 2) return false;
+        if (!char.IsDigit(s[0])) return false;
+        if (colon == 2 && !char.IsDigit(s[1])) return false;
+        if (colon + 2 >= s.Length) return false;
+        if (!char.IsDigit(s[colon + 1]) || !char.IsDigit(s[colon + 2])) return false;
+
+        if (s.Length == colon + 3) return true;
+        string rest = s[(colon + 3)..].Trim();
+        return string.Equals(rest, "AM", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(rest, "PM", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsRelativeTimestamp(string s)
     {
-        if (string.Equals(s, "now", StringComparison.OrdinalIgnoreCase)) return true;
-        if (s.Length is >= 2 and <= 5 && char.IsDigit(s[0]))
+        if (string.Equals(s, "now", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(s, "just now", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(s, "today", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(s, "yesterday", StringComparison.OrdinalIgnoreCase))
         {
-            string suffix = s.TrimStart("0123456789".ToCharArray());
-            if (suffix is "s" or "m" or "h" or "d" or "w" or "mo" or "y")
+            return true;
+        }
+
+        if (s.Length is >= 2 and <= 6 && char.IsDigit(s[0]))
+        {
+            string suffix = s.TrimStart("0123456789".ToCharArray()).Trim();
+            if (suffix is "s" or "m" or "h" or "d" or "w" or "mo" or "y" or "sec" or "min" or "hr" or "day" or "days")
             {
                 return true;
             }

@@ -109,8 +109,16 @@ public sealed class AgentNarrationCoordinator : IDisposable
         CancellationToken token)
     {
         // Allow the target window to settle after prompt submission, then capture baseline on background thread.
-        await Task.Delay(150, token).ConfigureAwait(false);
-        observer.Poll();
+        await Task.Delay(200, token).ConfigureAwait(false);
+        for (int retry = 0; retry < 5; retry++)
+        {
+            observer.Poll();
+            if (observer.CapturedNodeCount > 0)
+            {
+                break;
+            }
+            await Task.Delay(100, token).ConfigureAwait(false);
+        }
 
         string runId = generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var scheduler = new NarrationScheduler(_options());
@@ -128,7 +136,8 @@ public sealed class AgentNarrationCoordinator : IDisposable
                     VisibleAgentUpdate actualUpdate = update;
                     if (!string.IsNullOrEmpty(confirmedPrompt))
                     {
-                        if (string.Equals(trimmed, confirmedPrompt, StringComparison.OrdinalIgnoreCase))
+                        if (string.Equals(trimmed, confirmedPrompt, StringComparison.OrdinalIgnoreCase) ||
+                            (trimmed.Length <= confirmedPrompt.Length + 15 && trimmed.Contains(confirmedPrompt, StringComparison.OrdinalIgnoreCase)))
                         {
                             continue;
                         }

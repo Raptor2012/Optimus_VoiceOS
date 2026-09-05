@@ -96,6 +96,61 @@ public sealed class AgentWindowObserverTests
         Assert.Equal(VisibleAgentActivity.VisibleText, single.Activity);
     }
 
+    [Fact]
+    public void Poll_IgnoresIdeChromeBannersSymbolsAndClocks()
+    {
+        var source = new FakeTextSource(
+            new VisibleTextNode("c-1", "Restart to Update"),
+            new VisibleTextNode("c-2", "Open IDE"),
+            new VisibleTextNode("c-3", "Load older messages"),
+            new VisibleTextNode("c-4", "->"),
+            new VisibleTextNode("c-5", "•"),
+            new VisibleTextNode("c-6", "/"),
+            new VisibleTextNode("c-7", "..."),
+            new VisibleTextNode("c-8", "10:08 AM"),
+            new VisibleTextNode("c-9", "2mo"),
+            new VisibleTextNode("c-10", "See all (11)"),
+            new VisibleTextNode("c-11", "I have finished the implementation."));
+        var observer = new AgentWindowObserver(BoundWindow, source, _ => true);
+
+        IReadOnlyList<VisibleAgentUpdate> updates = observer.Poll();
+
+        VisibleAgentUpdate single = Assert.Single(updates);
+        Assert.Equal("I have finished the implementation.", single.Text);
+    }
+
+    [Fact]
+    public void Poll_RemembersSeenTextAcrossVisibilityChanges()
+    {
+        var source = new FakeTextSource(
+            new VisibleTextNode("msg-1", "Initial historical message 1"),
+            new VisibleTextNode("msg-2", "Initial historical message 2"));
+        var observer = new AgentWindowObserver(BoundWindow, source, _ => true);
+
+        // Baseline poll captures both messages
+        IReadOnlyList<VisibleAgentUpdate> baseline = observer.Poll();
+        Assert.Equal(2, baseline.Count);
+        Assert.Equal(2, observer.CapturedNodeCount);
+
+        // Subsequent poll with same messages produces no updates
+        Assert.Empty(observer.Poll());
+
+        // msg-1 scrolls offscreen
+        source.Nodes = new[] { new VisibleTextNode("msg-2", "Initial historical message 2") };
+        Assert.Empty(observer.Poll());
+
+        // msg-1 scrolls back on screen along with a new message msg-3
+        source.Nodes = new[]
+        {
+            new VisibleTextNode("msg-1", "Initial historical message 1"),
+            new VisibleTextNode("msg-2", "Initial historical message 2"),
+            new VisibleTextNode("msg-3", "Brand new message 3")
+        };
+        IReadOnlyList<VisibleAgentUpdate> newUpdates = observer.Poll();
+        VisibleAgentUpdate single = Assert.Single(newUpdates);
+        Assert.Equal("Brand new message 3", single.Text);
+    }
+
     private sealed class FakeTextSource(params VisibleTextNode[] nodes) : IWindowTextSource
     {
         public IReadOnlyList<VisibleTextNode> Nodes { get; set; } = nodes;
