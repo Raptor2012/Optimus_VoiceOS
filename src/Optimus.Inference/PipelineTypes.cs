@@ -63,3 +63,27 @@ public interface IPromptCleaner : IDisposable
     /// </remarks>
     Task PrimeAsync(CancellationToken cancellationToken = default);
 }
+
+/// <summary>Structured intent parsed from conversational speech by Gemma.</summary>
+public sealed record InterpretedIntent(
+    string Intent,
+    string? Target = null,
+    string? Text = null,
+    string? OldText = null,
+    string? NewText = null,
+    long ElapsedMilliseconds = 0);
+
+/// <summary>
+/// Interprets spoken conversational commands and approvals using local Gemma 4.
+/// </summary>
+public interface IIntentInterpreter : IDisposable
+{
+    bool IsLoaded { get; }
+
+    void EnsureLoaded();
+
+    Task<InterpretedIntent?> InterpretAsync(string utterance, CancellationToken cancellationToken = default);
+
+    Task PrimeAsync(CancellationToken cancellationToken = default);
+}
+

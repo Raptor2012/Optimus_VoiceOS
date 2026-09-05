@@ -1388,6 +1388,42 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
 
                 // Destination voice prefix stripping and routing
                 VoiceDestinationResolver? resolver = _destinationResolver;
+                bool hasExplicitDestinationPrefix = false;
+                if (resolver != null)
+                {
+                    VoiceDestinationResolution resolution = resolver.Resolve(transcription.Text);
+                    if (resolution.Status == VoiceDestinationResolutionStatus.Resolved && !string.IsNullOrWhiteSpace(resolution.PromptText))
+                    {
+                        hasExplicitDestinationPrefix = true;
+                    }
+                }
+
+                // If not handled deterministically and no explicit destination prefix, check if it is a conversational command
+                if (!hasExplicitDestinationPrefix && _pipeline?.IntentInterpreter != null && !string.IsNullOrWhiteSpace(transcription.Text))
+                {
+                    try
+                    {
+                        InterpretedIntent? llmIntent = await _pipeline.IntentInterpreter.InterpretAsync(transcription.Text, token).ConfigureAwait(false);
+                        if (llmIntent != null && IsCurrent(generation))
+                        {
+                            ConversationCommand? convCmd = llmIntent.ToConversationCommand();
+                            if (convCmd != null)
+                            {
+                                _dispatchAction(() =>
+                                {
+                                    if (IsCurrent(generation))
+                                        handled = ExecuteConversationCommand(convCmd, duringApproval: false);
+                                });
+                                if (handled) return;
+                            }
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // Degrades to normal prompt processing
+                    }
+                }
+
                 if (resolver != null)
                 {
                     VoiceDestinationResolution resolution = resolver.Resolve(transcription.Text);
@@ -1427,7 +1463,7 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
                 {
                     try
                     {
-                        cleanup = await _pipeline.Cleaner.CleanAsync(textToClean, token).ConfigureAwait(false);
+                        cleanup = await _pipeline!.Cleaner.CleanAsync(textToClean, token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
                     {
@@ -1575,6 +1611,43 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
                     commandHandled = HandleConversationCommand(commandText, duringApproval: true);
             });
             if (commandHandled) return;
+
+            // Fall through to Gemma intent interpretation if deterministic matching didn't recognize it
+            if (command == ApprovalCommand.Unknown && _pipeline?.IntentInterpreter != null && !string.IsNullOrWhiteSpace(commandText))
+            {
+                try
+                {
+                    InterpretedIntent? llmIntent = await _pipeline.IntentInterpreter.InterpretAsync(commandText, token).ConfigureAwait(false);
+                    if (llmIntent != null && IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen && State == WidgetState.AwaitingApproval)
+                    {
+                        ConversationCommand? convCmd = llmIntent.ToConversationCommand();
+                        if (convCmd != null)
+                        {
+                            _dispatchAction(() =>
+                            {
+                                if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen)
+                                    commandHandled = ExecuteConversationCommand(convCmd, duringApproval: true);
+                            });
+                            if (commandHandled)
+                            {
+                                LastApprovalStatus = $"Heard: \"{commandText}\" (interpreted: {convCmd.Kind})";
+                                return;
+                            }
+                        }
+
+                        ApprovalCommand llmApproval = llmIntent.ToApprovalCommand();
+                        if (llmApproval != ApprovalCommand.Unknown)
+                        {
+                            command = llmApproval;
+                            LastApprovalStatus = $"Heard: \"{commandText}\" (interpreted: {command})";
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // Degrades to standard Unknown handling
+                }
+            }
 
             switch (command)
             {

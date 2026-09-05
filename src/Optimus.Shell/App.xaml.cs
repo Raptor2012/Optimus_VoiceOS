@@ -72,8 +72,7 @@ public partial class App : Application
 
             WidgetViewModel viewModel = _viewModel;
             VoicePipeline pipeline = _pipeline;
-            bool warmCleanup = viewModel.CleanupEnabled;
-            viewModel.StatusLine = warmCleanup ? "Loading speech and cleanup models..." : "Loading local speech recognition...";
+            viewModel.StatusLine = "Loading local speech and intelligence models...";
 
             // Load AND prime off the UI thread, so the first utterance runs at steady-state
             // latency rather than paying the one-off prompt-processing cost.
@@ -81,7 +80,7 @@ public partial class App : Application
             {
                 try
                 {
-                    await pipeline.WarmupAsync(includeCleanup: warmCleanup).ConfigureAwait(false);
+                    await pipeline.WarmupAsync(includeCleanup: true).ConfigureAwait(false);
                     Dispatcher.Invoke(() => viewModel.StatusLine = $"Ready — Hold {viewModel.HotkeyLabel} to speak");
                 }
                 catch (Exception ex)

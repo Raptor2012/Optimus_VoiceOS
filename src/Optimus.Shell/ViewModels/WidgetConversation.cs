@@ -173,6 +173,11 @@ public sealed partial class WidgetViewModel
     {
         ConversationCommand? command = ConversationCommand.Parse(text);
         if (command == null) return false;
+        return ExecuteConversationCommand(command, duringApproval);
+    }
+
+    internal bool ExecuteConversationCommand(ConversationCommand command, bool duringApproval)
+    {
         switch (command.Kind)
         {
             case "switch":

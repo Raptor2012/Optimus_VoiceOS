@@ -6,25 +6,41 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Captured audio to visible draft: Parakeet transcription, then Qwen cleanup, with a stage
-/// timing for each.
+/// Captured audio to visible draft: Parakeet transcription, then Gemma cleanup, with a stage
+/// timing for each. Also hosts <see cref="GemmaIntentInterpreter"/> using the shared resident Gemma process.
 /// </summary>
 public sealed class VoicePipeline : IDisposable
 {
     private readonly ISpeechTranscriber _transcriber;
     private readonly IPromptCleaner _cleaner;
+    private readonly IIntentInterpreter? _intentInterpreter;
+    private readonly LlamaServerProcess? _llamaServer;
     private readonly bool _ownsDependencies;
     private bool _disposed;
 
     public VoicePipeline()
-        : this(new ParakeetTranscriber(), new GemmaPromptCleaner(), ownsDependencies: true)
     {
+        var transcriber = new ParakeetTranscriber();
+        var llama = new LlamaServerProcess(ModelLocator.LlamaServerExecutable, ModelLocator.GemmaCleanupModel);
+        var cleaner = new GemmaPromptCleaner(llama);
+        var interpreter = new GemmaIntentInterpreter(llama);
+
+        _transcriber = transcriber;
+        _cleaner = cleaner;
+        _intentInterpreter = interpreter;
+        _llamaServer = llama;
+        _ownsDependencies = true;
     }
 
-    public VoicePipeline(ISpeechTranscriber transcriber, IPromptCleaner cleaner, bool ownsDependencies = false)
+    public VoicePipeline(
+        ISpeechTranscriber transcriber,
+        IPromptCleaner cleaner,
+        IIntentInterpreter? intentInterpreter = null,
+        bool ownsDependencies = false)
     {
         _transcriber = transcriber ?? throw new ArgumentNullException(nameof(transcriber));
         _cleaner = cleaner ?? throw new ArgumentNullException(nameof(cleaner));
+        _intentInterpreter = intentInterpreter;
         _ownsDependencies = ownsDependencies;
     }
 
@@ -33,6 +49,8 @@ public sealed class VoicePipeline : IDisposable
     public ISpeechTranscriber Transcriber => _transcriber;
 
     public IPromptCleaner Cleaner => _cleaner;
+
+    public IIntentInterpreter? IntentInterpreter => _intentInterpreter;
 
     /// <summary>
     /// Transcribes audio directly through Parakeet without invoking prompt cleanup.
@@ -52,6 +70,7 @@ public sealed class VoicePipeline : IDisposable
     {
         _transcriber.EnsureLoaded();
         _cleaner.EnsureLoaded();
+        _intentInterpreter?.EnsureLoaded();
     }
 
     /// <summary>
@@ -70,10 +89,14 @@ public sealed class VoicePipeline : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (includeCleanup)
+        if (includeCleanup || _intentInterpreter != null)
         {
             _cleaner.EnsureLoaded();
             await _cleaner.PrimeAsync(cancellationToken).ConfigureAwait(false);
+            if (_intentInterpreter != null)
+            {
+                await _intentInterpreter.PrimeAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -148,6 +171,8 @@ public sealed class VoicePipeline : IDisposable
         {
             _transcriber.Dispose();
             _cleaner.Dispose();
+            _intentInterpreter?.Dispose();
+            _llamaServer?.Dispose();
         }
     }
 }

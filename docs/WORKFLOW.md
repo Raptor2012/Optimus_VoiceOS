@@ -48,21 +48,12 @@ from actually speaking to the tool, not from reading code.
   a base change is ever wanted; `OPTIMUS_TTS_VOICE` overrides the model path with no code change.
 - Continuous session: every hold opens one; only a hotkey tap closes it; no idle timeout. The user
   was told the mic then stays open indefinitely and accepted it.
+- Voice barge-in: implemented (`b62c3a9`), gated behind "interrupt on/off" setting, keeping mic open through readback on headphones.
+- LLM intent interpretation: implemented with resident Gemma 4 E2B (`llama-server`). Kept deterministic regex/word matchers as the 0 ms fast path, falling through to Gemma for conversational commands and approvals. Disambiguates control commands from agent prompts (returning "none" for prompts).
 
 ### Next, agreed with the user and not yet started
 
-1. LLM intent interpretation. The user finds deterministic command matching poor UX and wants
-   Gemma to interpret intent. Agreed shape: keep the deterministic matcher as an instant fast
-   path, fall through to Gemma for anything it does not recognise. Note Gemma is currently not
-   running at all — `llama-server` only warms when cleanup is enabled, which is off by default —
-   so this means keeping it resident.
-2. Voice barge-in. The user wants to interrupt speech by talking, with the interruption
-   interpreted as a new command (approval, correction, or fresh prompt). The blocker is acoustic,
-   not logical: the mic is muted during TTS precisely so it cannot hear itself. The user uses
-   headphones and speakers depending on the day, and chose: build the headphone path properly,
-   gate it behind a setting defaulting to off, and do not claim it works on speakers until
-   acoustic echo cancellation is proven.
-3. Live workspace index. The user's idea, and a good one: the UIA walk already enumerates every
+1. Live workspace index. The user's idea, and a good one: the UIA walk already enumerates every
    project and conversation name in each app. Keeping that indexed gives deterministic matching
    over a vocabulary that is the actual workspace rather than memorised phrases. This is also the
    per-app conversation navigation that was previously listed as unimplemented.
