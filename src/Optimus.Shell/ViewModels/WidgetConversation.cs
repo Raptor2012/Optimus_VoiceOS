@@ -128,6 +128,35 @@ public sealed partial class WidgetViewModel
         StatusLine = "Listening on Pixel...";
     }
 
+    /// <summary>
+    /// Recovers from a phone capture that can never arrive, so the widget does not wait forever
+    /// on a device that has gone away.
+    /// </summary>
+    /// <remarks>
+    /// Only a capture the phone owns is abandoned. A hold in progress on this PC keeps the
+    /// microphone and finishes normally, even if the phone drops at the same moment.
+    /// </remarks>
+    public void PhoneCaptureAbandoned()
+    {
+        if (State != WidgetState.Listening || !_draftOriginPhone)
+        {
+            return;
+        }
+
+        if (_controller?.AudioCaptureService.IsCapturing == true)
+        {
+            return;
+        }
+
+        _phoneApprovalListener?.Cancel();
+        _draftOriginPhone = false;
+        State = HasDraft ? WidgetState.Confirm : WidgetState.Idle;
+        StatusLine = HasDraft
+            ? "Phone disconnected — review the draft, then confirm"
+            : $"Phone disconnected — Hold {HotkeyLabel} to speak";
+        _controller?.Start();
+    }
+
     internal bool HandleConversationCommand(string text, bool duringApproval)
     {
         ConversationCommand? command = ConversationCommand.Parse(text);

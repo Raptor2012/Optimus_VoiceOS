@@ -156,6 +156,7 @@ public partial class App : Application
                     viewModel.DraftText = text));
             _phoneSession.ProcessCapturedAudio = pcm => Dispatcher.Invoke(() => viewModel.ProcessPhoneAudio(pcm));
             _phoneSession.CaptureBeginning = () => Dispatcher.Invoke(viewModel.PhoneCaptureBeginning);
+            _phoneSession.CaptureAbandoned = () => Dispatcher.Invoke(viewModel.PhoneCaptureAbandoned);
             _viewModel.PropertyChanged += (_, change) =>
             {
                 if (change.PropertyName == nameof(WidgetViewModel.State))

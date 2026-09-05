@@ -37,6 +37,16 @@ public sealed class PhoneSession : IDisposable
     public Action<byte[]>? ProcessCapturedAudio { get; set; }
     public Action? CaptureBeginning { get; set; }
 
+    /// <summary>
+    /// Raised when a capture the phone announced can no longer complete, because the phone went
+    /// away before sending its audio.
+    /// </summary>
+    /// <remarks>
+    /// Without this the widget waits on a device that is gone: the phone signals capture start,
+    /// drops, and nothing ever moves the widget out of the listening state.
+    /// </remarks>
+    public Action? CaptureAbandoned { get; set; }
+
     private MemoryStream? _buffer;
     private CancellationTokenSource? _processingCts;
     private int _utteranceGeneration;
@@ -258,6 +268,10 @@ public sealed class PhoneSession : IDisposable
         {
             _endpoint.SendStatus("idle", "Connected to PC");
             PushDestinations();
+        }
+        else
+        {
+            CaptureAbandoned?.Invoke();
         }
     }
 
