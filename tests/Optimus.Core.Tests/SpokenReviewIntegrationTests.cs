@@ -267,6 +267,29 @@ public class SpokenReviewIntegrationTests
                 Outcome == SpokenReviewOutcome.Completed ? null : "engine unavailable");
         }
 
+        public async Task<SpokenReviewResult> SpeakPromptAsync(
+            string prompt, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            LastDraft = prompt;
+            IsSpeaking = true;
+            _started.Release();
+
+            if (HoldUntilReleased)
+            {
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            IsSpeaking = false;
+            _spoken.Release();
+
+            var timings = new SpokenReviewTimings(120, 900, 110, new long[] { 90 }, 0);
+            return new SpokenReviewResult(
+                Outcome,
+                Outcome == SpokenReviewOutcome.Completed ? timings : null,
+                Outcome == SpokenReviewOutcome.Completed ? null : "engine unavailable");
+        }
+
         public void Cancel() => CancelCount++;
 
         public void Release() => _gate.Release();

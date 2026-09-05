@@ -8,6 +8,7 @@ public enum ApprovalCommand
     Affirmative,
     Redictate,
     Cancel,
+    UseOriginal,
 }
 
 /// <summary>
@@ -47,6 +48,17 @@ public static class ApprovalCommandClassifier
         "never mind",
     };
 
+    private static readonly HashSet<string> UseOriginalCommands = new(StringComparer.Ordinal)
+    {
+        "use original",
+        "original",
+        "use raw",
+        "raw",
+        "keep original",
+        "revert to original",
+        "revert",
+    };
+
     public static ApprovalCommand Classify(string? transcript)
     {
         string normalized = Normalize(transcript);
@@ -64,6 +76,11 @@ public static class ApprovalCommandClassifier
         if (CancelCommands.Contains(normalized))
         {
             return ApprovalCommand.Cancel;
+        }
+
+        if (UseOriginalCommands.Contains(normalized))
+        {
+            return ApprovalCommand.UseOriginal;
         }
 
         return ApprovalCommand.Unknown;

@@ -59,6 +59,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
     public event EventHandler<AgentRunEventArgs>? AgentRunStarting;
     public event EventHandler? AgentRunCancelled;
     public event EventHandler<DestinationOption?>? SelectedDestinationChanged;
+    public event EventHandler? DestinationStatusChanged;
     public event EventHandler<WidgetSendStartingEventArgs>? SendingStarted;
     public event EventHandler<WidgetSendCompletedEventArgs>? SendCompleted;
     public event EventHandler? Cancelled;
@@ -112,8 +113,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 OnPropertyChanged(nameof(IsDraftVisible));
                 OnPropertyChanged(nameof(IsConfirmPanelVisible));
 
-                // If modified while awaiting approval, reading, or confirm, invalidate approval and reread
-                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft or WidgetState.Confirm)
+                // If modified while awaiting approval or reading, invalidate approval and reread
+                if (State is WidgetState.AwaitingApproval or WidgetState.ReadingDraft)
                 {
                     _approvalListener?.Cancel();
                     _phoneApprovalListener?.Cancel();
@@ -190,7 +191,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 if (value != null)
                 {
                     value.Status = value.Adapter.Probe();
-                    DestinationName = value.DisplayName;
+                    DestinationName = FormatDestinationWithWindow(value.DisplayName, value.Adapter.BoundWindow);
                 }
 
                 OnPropertyChanged();
@@ -686,13 +687,17 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             ISpokenReview? activeSpeech = _draftOriginPhone ? _phoneSpeech : _speech;
             if (activeSpeech != null)
             {
-                string currentSpokenKey = BuildSpokenKey(destination.DestinationId, draftSnapshot);
-                if (IsSpeakingReview || !string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
+                if (IsSpeakingReview)
+                {
+                    StatusLine = "Wait for the spoken review to finish.";
+                    return;
+                }
+
+                string currentSpokenKey = BuildSpokenKey(destination.DestinationId, destination.Adapter.BoundWindow?.Handle ?? 0, draftSnapshot);
+                if (!string.Equals(_lastSpokenKey, currentSpokenKey, StringComparison.Ordinal))
                 {
                     MaybeSpeakReview();
-                    StatusLine = IsSpeakingReview
-                        ? "Wait for the spoken review to finish."
-                        : "The changed draft must be read aloud before sending.";
+                    StatusLine = "The changed draft must be read aloud before sending.";
                     return;
                 }
             }
@@ -810,9 +815,22 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
+        DestinationStatus probeStatus = destination.Adapter.Probe();
+        destination.Status = probeStatus;
+        DestinationName = FormatDestinationWithWindow(destination.DisplayName, destination.Adapter.BoundWindow);
+
+        int generation = Volatile.Read(ref _utteranceGeneration);
+        int reviewGeneration = Interlocked.Increment(ref _spokenReviewGeneration);
+
+        if (!probeStatus.CanSend)
+        {
+            _ = RunWindowSelectionFlowAsync(generation, reviewGeneration, destination, speech);
+            return;
+        }
+
         // One reading per draft and destination, so re-probing or a redundant property change
         // cannot make it speak twice.
-        string key = BuildSpokenKey(destination.DestinationId, draft);
+        string key = BuildSpokenKey(destination.DestinationId, destination.Adapter.BoundWindow?.Handle ?? 0, draft);
         if (string.Equals(_lastSpokenKey, key, StringComparison.Ordinal))
         {
             return;
@@ -820,10 +838,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
         _lastSpokenKey = key;
 
-        string destinationName = destination.DisplayName;
-        int generation = Volatile.Read(ref _utteranceGeneration);
-        int reviewGeneration = Interlocked.Increment(ref _spokenReviewGeneration);
-
+        string destinationName = DestinationName;
         State = WidgetState.ReadingDraft;
         IsSpeakingReview = true;
         SpeechStatus = "Reading the draft aloud...";
@@ -896,8 +911,18 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         });
     }
 
-    private static string BuildSpokenKey(string destinationId, string draft) =>
-        destinationId + "\u001f" + draft;
+    private static string BuildSpokenKey(string destinationId, long windowHandle, string draft) =>
+        destinationId + "\u001f" + windowHandle + "\u001f" + draft;
+
+    public static string FormatDestinationWithWindow(string appName, WindowCandidate? boundWindow)
+    {
+        if (boundWindow == null || string.IsNullOrWhiteSpace(boundWindow.Title))
+        {
+            return appName;
+        }
+
+        return $"{appName} ({boundWindow.Title})";
+    }
 
     /// <summary>Re-probes every destination and refreshes the picker.</summary>
     public void RefreshDestinations()
@@ -907,7 +932,13 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
             option.Status = option.Adapter.Probe();
         }
 
+        if (SelectedDestination != null)
+        {
+            DestinationName = FormatDestinationWithWindow(SelectedDestination.DisplayName, SelectedDestination.Adapter.BoundWindow);
+        }
+
         UpdateWindowChoices();
+        DestinationStatusChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Binds the selected destination to the exact window the user picked.</summary>
@@ -925,8 +956,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         {
             destination.Adapter.Bind(window);
             destination.Status = destination.Adapter.Probe();
+            DestinationName = FormatDestinationWithWindow(destination.DisplayName, destination.Adapter.BoundWindow);
             StatusLine = $"{destination.DisplayName} bound to {window.DisplayLabel}";
             ErrorMessage = string.Empty;
+            DestinationStatusChanged?.Invoke(this, EventArgs.Empty);
 
             if (State == WidgetState.Error)
             {
@@ -940,6 +973,8 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
         }
 
         UpdateWindowChoices();
+        _lastSpokenKey = string.Empty;
+        MaybeSpeakReview();
     }
 
     private void UpdateWindowChoices()
@@ -1135,7 +1170,7 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                 {
                     if (!IsCurrent(generation)) return;
 
-                    RawTranscript = transcription.Text;
+                    RawTranscript = textToClean;
                     DraftText = cleanup.Text;
                     StageTimings = $"audio {seconds:F1}s · STT {transcription.ElapsedMilliseconds} ms · cleanup {cleanup.ElapsedMilliseconds} ms · total {totalStopwatch.ElapsedMilliseconds} ms";
                     State = WidgetState.Confirm;
@@ -1270,6 +1305,10 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
                     _dispatchAction(StartRedictation);
                     return;
 
+                case ApprovalCommand.UseOriginal:
+                    _dispatchAction(UseOriginalDraft);
+                    return;
+
                 default: // Unknown
                     attempt++;
                     if (attempt < maxAttempts)
@@ -1377,6 +1416,283 @@ public sealed class WidgetViewModel : INotifyPropertyChanged, IDisposable
 
             ProcessAudioBytes(redictatedAudio, generation, token);
         });
+    }
+
+    public void UseOriginalDraft()
+    {
+        if (string.IsNullOrWhiteSpace(RawTranscript))
+        {
+            return;
+        }
+
+        _lastSpokenKey = string.Empty;
+        if (!string.Equals(DraftText, RawTranscript, StringComparison.Ordinal))
+        {
+            DraftText = RawTranscript;
+        }
+        else
+        {
+            State = WidgetState.Confirm;
+            MaybeSpeakReview();
+        }
+
+        StatusLine = "Reverted to raw transcript — review, then confirm";
+    }
+
+    private async Task RunWindowSelectionFlowAsync(
+        int utteranceGen,
+        int reviewGen,
+        DestinationOption destination,
+        ISpokenReview speech)
+    {
+        IApprovalListener? listener = _draftOriginPhone ? _phoneApprovalListener : _approvalListener;
+        if (listener == null)
+        {
+            _dispatchAction(() =>
+            {
+                State = WidgetState.Confirm;
+                _controller?.Start();
+            });
+            return;
+        }
+
+        const int maxAttempts = 3;
+        int attempt = 0;
+
+        while (attempt < maxAttempts)
+        {
+            if (!IsCurrent(utteranceGen) ||
+                Volatile.Read(ref _spokenReviewGeneration) != reviewGen)
+            {
+                return;
+            }
+
+            CancellationToken token = _processingCts?.Token ?? default;
+
+            // Probe candidates
+            destination.Status = destination.Adapter.Probe();
+            IReadOnlyList<WindowCandidate> candidates = destination.Status.Candidates;
+            _dispatchAction(UpdateWindowChoices);
+
+            string prompt;
+            if (candidates.Count == 0)
+            {
+                prompt = $"{destination.Status.Detail}. Say refresh windows to try again, or cancel.";
+                _dispatchAction(() =>
+                {
+                    StatusLine = prompt;
+                });
+            }
+            else if (candidates.Count == 1)
+            {
+                string title = string.IsNullOrWhiteSpace(candidates[0].Title) ? candidates[0].ProcessName : candidates[0].Title;
+                prompt = $"Found one {destination.DisplayName} window: {title}. Use this window?";
+                _dispatchAction(() =>
+                {
+                    StatusLine = $"Found one {destination.DisplayName} window: {title}. Say \"use that window\" or \"yes\" to bind.";
+                });
+            }
+            else
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"Found {candidates.Count} {destination.DisplayName} windows. ");
+                string[] numberWords = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten" };
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    string num = i < numberWords.Length ? numberWords[i] : (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    string title = string.IsNullOrWhiteSpace(candidates[i].Title) ? candidates[i].ProcessName : candidates[i].Title;
+                    sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"Window {num}: {title}. ");
+                }
+                sb.Append("Which window would you like to use?");
+                prompt = sb.ToString();
+                _dispatchAction(() =>
+                {
+                    StatusLine = $"Choose {destination.DisplayName} window: say \"window one\", \"window two\", or window title.";
+                });
+            }
+
+            _dispatchAction(() =>
+            {
+                if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen)
+                {
+                    State = WidgetState.ReadingDraft;
+                    IsSpeakingReview = true;
+                    SpeechStatus = "Asking for window selection...";
+                    _controller?.Stop();
+                }
+            });
+
+            SpokenReviewResult speakResult;
+            try
+            {
+                speakResult = await speech.SpeakPromptAsync(prompt, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                speakResult = new SpokenReviewResult(SpokenReviewOutcome.Failed, null, ex.Message);
+            }
+
+            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen)
+            {
+                return;
+            }
+
+            if (speakResult.Outcome == SpokenReviewOutcome.Cancelled)
+            {
+                _dispatchAction(() =>
+                {
+                    IsSpeakingReview = false;
+                    State = WidgetState.Confirm;
+                    _controller?.Start();
+                });
+                return;
+            }
+
+            if (speakResult.Outcome == SpokenReviewOutcome.Failed)
+            {
+                _dispatchAction(() =>
+                {
+                    IsSpeakingReview = false;
+                    SpeechStatus = $"Voice unavailable: {speakResult.FailureDetail}";
+                    State = WidgetState.Confirm;
+                    _controller?.Start();
+                });
+                return;
+            }
+
+            _dispatchAction(() =>
+            {
+                IsSpeakingReview = false;
+                State = WidgetState.AwaitingApproval;
+                SpeechStatus = "Listening for window choice...";
+            });
+
+            byte[] audio;
+            try
+            {
+                audio = await listener.ListenForApprovalAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch
+            {
+                _dispatchAction(() =>
+                {
+                    if (IsCurrent(utteranceGen) && Volatile.Read(ref _spokenReviewGeneration) == reviewGen)
+                    {
+                        State = WidgetState.Confirm;
+                        StatusLine = "Window selection listening failed — review or select manually";
+                        _controller?.Start();
+                    }
+                });
+                return;
+            }
+
+            if (!IsCurrent(utteranceGen) || Volatile.Read(ref _spokenReviewGeneration) != reviewGen || State != WidgetState.AwaitingApproval)
+            {
+                return;
+            }
+
+            if (audio.Length == 0)
+            {
+                attempt++;
+                continue;
+            }
+
+            string heard = string.Empty;
+            if (_pipeline != null)
+            {
+                try
+                {
+                    TranscriptionResult transResult = _pipeline.TranscribeOnly(audio, token);
+                    heard = transResult.Text;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch
+                {
+                    heard = string.Empty;
+                }
+            }
+
+            WindowSelectionResult selectionResult = WindowSelectionCommandClassifier.Classify(heard, candidates);
+            LastApprovalStatus = $"Heard: \"{heard}\" ({selectionResult.Command})";
+
+            switch (selectionResult.Command)
+            {
+                case WindowSelectionCommandType.Selected:
+                    _dispatchAction(() =>
+                    {
+                        try
+                        {
+                            destination.Adapter.Bind(selectionResult.SelectedCandidate!);
+                            destination.Status = destination.Adapter.Probe();
+                            SelectedWindowChoice = selectionResult.SelectedCandidate;
+                            UpdateWindowChoices();
+                            DestinationName = FormatDestinationWithWindow(destination.DisplayName, destination.Adapter.BoundWindow);
+                            StatusLine = $"{destination.DisplayName} bound to {selectionResult.SelectedCandidate!.DisplayLabel}";
+                            DestinationStatusChanged?.Invoke(this, EventArgs.Empty);
+                            _lastSpokenKey = string.Empty;
+                            State = WidgetState.Confirm;
+                            _controller?.Start();
+                            MaybeSpeakReview();
+                        }
+                        catch (Exception ex)
+                        {
+                            ErrorMessage = ex.Message;
+                            State = WidgetState.Error;
+                            _controller?.Start();
+                        }
+                    });
+                    return;
+
+                case WindowSelectionCommandType.Refresh:
+                    _dispatchAction(RefreshDestinations);
+                    attempt = 0;
+                    continue;
+
+                case WindowSelectionCommandType.Repeat:
+                    continue;
+
+                case WindowSelectionCommandType.Cancel:
+                    _dispatchAction(() =>
+                    {
+                        State = WidgetState.Confirm;
+                        StatusLine = "Window selection cancelled — draft kept";
+                        _controller?.Start();
+                    });
+                    return;
+
+                default: // Unknown
+                    attempt++;
+                    if (attempt < maxAttempts)
+                    {
+                        string reprompt = candidates.Count == 1
+                            ? "Didn't catch that. Say \"use that window\", or \"cancel\"."
+                            : "Didn't catch that. Say \"window one\", \"window two\", \"repeat options\", or \"cancel\".";
+                        try
+                        {
+                            await speech.SpeakPromptAsync(reprompt, token).ConfigureAwait(false);
+                        }
+                        catch { }
+                    }
+                    else
+                    {
+                        _dispatchAction(() =>
+                        {
+                            State = WidgetState.Confirm;
+                            StatusLine = "Select a window to bind, then confirm";
+                            _controller?.Start();
+                        });
+                        return;
+                    }
+                    break;
+            }
+        }
     }
 
     private void OnCaptureError(object? sender, CaptureErrorEventArgs e)

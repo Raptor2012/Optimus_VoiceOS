@@ -234,6 +234,24 @@ real-device dogfood to tune per-app UI text classification and narration phrasin
 
 ## S011 — Dogfood and measured latency fixes
 
+Immediate next task for Gemini: remove the mouse-only window-binding step on PC and Pixel.
+
+- Implement the spoken window-selection flow in PROJECT_PLAN.md using the existing local TTS,
+  STT, and phone audio path. Check readiness before the send-review question.
+- One candidate: announce its title and accept "use that window"/"yes" to bind. Multiple:
+  announce numbered titles and accept an explicit number or exact unique title. No candidates:
+  speak the reason and allow "refresh windows" or "cancel". Keep the pending draft.
+- After binding, read the exact draft and app/window title, then listen for separate send
+  approval. Window-selection speech must never become send approval. Reuse live bindings;
+  reopen spoken selection if the bound window disappears. Mirror choices/status on Pixel.
+- Add "use original" to recover the raw prompt by voice and require fresh spoken review.
+  Fix cleanup deleting meaningful instructions. Screenshot regression input: "Just testing
+  this uh in anti-gravity, do not reply anything, just send this message." The latter two
+  clauses must remain; do not treat casual mention of an app as a routing prefix.
+- Verify first-use binding from both devices without mouse/second hotkey, two-window choice,
+  refresh after a window closes, and separate bind/send confirmation. Then build and provide
+  a runnable PC build and Pixel APK. No new planning documents or generalized command framework.
+
 Owner: Claude Opus 5; Sol reviews only blockers
 
 Use the app during real coding from both Windows and Pixel. Record simple timestamps, fix the largest measured delays, and remove friction discovered in use.

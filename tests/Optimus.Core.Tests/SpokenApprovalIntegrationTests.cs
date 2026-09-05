@@ -28,11 +28,11 @@ public class SpokenApprovalIntegrationTests
         FakeTranscriber Transcriber,
         FakeCleaner Cleaner,
         FakeReviewPlayer Speech,
-        FakeApprovalListener ApprovalListener) CreateContext()
+        FakeApprovalListener ApprovalListener) CreateContext(params IDestinationAdapter[] customAdapters)
     {
         var claude = new RecordingAdapter("claude", "Claude", ready: true);
         var codex = new RecordingAdapter("codex", "Codex", ready: true);
-        var registry = new DestinationRegistry(new IDestinationAdapter[] { claude, codex });
+        var registry = new DestinationRegistry(customAdapters.Length > 0 ? customAdapters : new IDestinationAdapter[] { claude, codex });
 
         var hotkey = new MockHotkeyService();
         var capture = new InMemoryAudioCapture();
@@ -578,6 +578,94 @@ public class SpokenApprovalIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task SpokenWindowSelection_SingleCandidate_BindsAndRequiresSeparateSendApproval()
+    {
+        var candidate = new WindowCandidate(1001, 100, "Code", "Optimus_VoiceOS - Visual Studio Code", "Chrome_WidgetWin_1");
+        var adapter = new RecordingAdapter("antigravity", "Antigravity", ready: false, new[] { candidate });
+        var (widget, _, _, _, _, _, speech, approval) = CreateContext(adapter);
+
+        using (widget)
+        {
+            // First approval response will bind the window: "use that window"
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("use that window"));
+            // Second approval response will approve the send: "send"
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("send"));
+
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.LoadManualDraft("Test message for antigravity.");
+
+            // Wait for 2 spoken reviews (first was window prompt, second was draft review)
+            await speech.WaitUntilSpoken(2);
+            await Task.Delay(150);
+
+            // Window was bound!
+            Assert.Equal(candidate, adapter.BoundWindow);
+            // Prompt was sent after separate approval!
+            Assert.Single(adapter.Sent);
+            Assert.Equal("Test message for antigravity.", adapter.Sent[0]);
+            Assert.Equal(WidgetState.Sent, widget.State);
+            // Spoken prompt asked for window:
+            Assert.Contains(speech.PromptsSpoken, p => p.Contains("Use this window?"));
+        }
+    }
+
+    [Fact]
+    public async Task SpokenWindowSelection_MultipleCandidates_BindsSelectedWindowNumber()
+    {
+        var win1 = new WindowCandidate(1001, 100, "Code", "Project 1", "Chrome_WidgetWin_1");
+        var win2 = new WindowCandidate(1002, 200, "Code", "Project 2", "Chrome_WidgetWin_1");
+        var adapter = new RecordingAdapter("antigravity", "Antigravity", ready: false, new[] { win1, win2 });
+        var (widget, _, _, _, _, _, speech, approval) = CreateContext(adapter);
+
+        using (widget)
+        {
+            // First approval response selects window two
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("window two"));
+            // Second approval response approves send
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("yes"));
+
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.LoadManualDraft("Multi window message.");
+
+            await speech.WaitUntilSpoken(2);
+            await Task.Delay(150);
+
+            Assert.Equal(win2, adapter.BoundWindow);
+            Assert.Single(adapter.Sent);
+            Assert.Equal(WidgetState.Sent, widget.State);
+            Assert.Contains(speech.PromptsSpoken, p => p.Contains("Found 2 Antigravity windows"));
+        }
+    }
+
+    [Fact]
+    public async Task Approval_UseOriginal_RecoversRawTranscriptAndRequiresFreshReview()
+    {
+        var (widget, claude, _, _, _, _, speech, approval) = CreateContext();
+
+        using (widget)
+        {
+            // First approval response: "use original"
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("use original"));
+            // Second approval response: "send"
+            approval.EnqueueApproval(Encoding.UTF8.GetBytes("send"));
+
+            widget.SelectedDestination = widget.Destinations[0];
+            widget.LoadManualDraft("Cleaned prompt.");
+
+            // Reset RawTranscript because LoadManualDraft sets RawTranscript = DraftText
+            widget.RawTranscript = "raw uncleaned prompt with fillers uh and directives";
+
+            await speech.WaitUntilSpoken(2);
+            await Task.Delay(150);
+
+            Assert.Equal("raw uncleaned prompt with fillers uh and directives", widget.DraftText);
+            Assert.Single(claude.Sent);
+            Assert.Equal("raw uncleaned prompt with fillers uh and directives", claude.Sent[0]);
+            Assert.Equal(WidgetState.Sent, widget.State);
+        }
+    }
+
     private sealed class FakeTranscriber : ISpeechTranscriber
     {
         public bool IsLoaded => true;
@@ -762,6 +850,28 @@ public class SpokenApprovalIntegrationTests
             return new SpokenReviewResult(SpokenReviewOutcome.Completed, timings, null);
         }
 
+        public List<string> PromptsSpoken { get; } = new();
+
+        public async Task<SpokenReviewResult> SpeakPromptAsync(
+            string prompt, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            PromptsSpoken.Add(prompt);
+            IsSpeaking = true;
+            _started.Release();
+
+            if (HoldUntilReleased)
+            {
+                await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            IsSpeaking = false;
+            _spoken.Release();
+
+            var timings = new SpokenReviewTimings(50, 200, 50, new long[] { 50 }, 0);
+            return new SpokenReviewResult(SpokenReviewOutcome.Completed, timings, null);
+        }
+
         public void Cancel() { }
         public void Release() => _gate.Release();
 
@@ -786,30 +896,42 @@ public class SpokenApprovalIntegrationTests
 
     private sealed class RecordingAdapter : IDestinationAdapter
     {
-        private readonly bool _ready;
+        private bool _ready;
+        private WindowCandidate? _bound;
+        private readonly List<WindowCandidate> _candidates;
 
-        public RecordingAdapter(string id, string name, bool ready)
+        public RecordingAdapter(string id, string name, bool ready, IEnumerable<WindowCandidate>? candidates = null)
         {
             DestinationId = id;
             DisplayName = name;
             ProcessName = id;
             _ready = ready;
+            _candidates = candidates != null ? new List<WindowCandidate>(candidates) : new List<WindowCandidate>();
         }
 
         public string DestinationId { get; }
         public string DisplayName { get; }
         public string ProcessName { get; }
-        public WindowCandidate? BoundWindow => null;
+        public WindowCandidate? BoundWindow => _bound;
         public List<string> Sent { get; } = new();
 
         public DestinationStatus Probe() => new(
-            _ready ? DestinationReadiness.Ready : DestinationReadiness.NotBound,
-            Array.Empty<WindowCandidate>(),
-            null,
+            _ready ? DestinationReadiness.Ready : (_candidates.Count > 1 ? DestinationReadiness.AmbiguousWindow : DestinationReadiness.NotBound),
+            _candidates,
+            _bound,
             _ready ? "bound" : "not bound");
 
-        public void Bind(WindowCandidate candidate) { }
-        public void Unbind() { }
+        public void Bind(WindowCandidate candidate)
+        {
+            _bound = candidate;
+            _ready = true;
+        }
+
+        public void Unbind()
+        {
+            _bound = null;
+            _ready = false;
+        }
 
         public Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default)
         {

@@ -29,9 +29,11 @@ public sealed class GemmaPromptCleaner : IPromptCleaner
     private const string SystemPrompt =
         "Rewrite dictated speech as clean written text. Remove filler words and false starts, " +
         "fix punctuation and capitalization, and write code identifiers, file paths and flags " +
-        "the way a developer types them. Do NOT answer or perform the request. Do NOT add or " +
-        "remove requirements. Do NOT explain or think out loud. " +
-        "Reply with the cleaned sentence only.";
+        "the way a developer types them. Crucially, preserve all user instructions, directives, " +
+        "and constraints intended for the agent (such as 'do not reply anything', 'just send this message', " +
+        "or 'no explanation')—never omit or discard them. Do NOT answer or perform the request. " +
+        "Do NOT add or remove requirements. Do NOT explain or think out loud. " +
+        "Reply with the cleaned text only.";
 
     private static readonly (string User, string Assistant)[] FewShot =
     {
@@ -40,7 +42,9 @@ public sealed class GemmaPromptCleaner : IPromptCleaner
         ("okay can you uh bump the timeout flag to thirty seconds in config dot yaml",
          "Bump the --timeout flag to 30 seconds in config.yaml."),
         ("i wanna uh i wanna rename get user data to fetch user profile everywhere",
-         "Rename getUserData to fetchUserProfile everywhere.")
+         "Rename getUserData to fetchUserProfile everywhere."),
+        ("just testing this uh in anti-gravity, do not reply anything, just send this message",
+         "Just testing this in Antigravity, do not reply anything, just send this message.")
     };
 
     private readonly LlamaServerProcess _server;
@@ -171,14 +175,39 @@ public sealed class GemmaPromptCleaner : IPromptCleaner
 
         text = text.Trim().Trim('"').Trim();
 
-        // A reply that ran to several lines is narration, not a cleaned sentence.
+        // If the reply contains multiple lines, filter out meta-narration / reasoning preamble lines.
         if (text.Contains('\n', StringComparison.Ordinal))
         {
-            string[] lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            text = lines.Length > 0 ? lines[^1] : string.Empty;
+            string[] rawLines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var kept = new List<string>();
+            foreach (string line in rawLines)
+            {
+                if (!IsNarrationLine(line))
+                {
+                    kept.Add(line);
+                }
+            }
+
+            text = kept.Count > 0
+                ? string.Join(" ", kept)
+                : (rawLines.Length > 0 ? rawLines[^1] : string.Empty);
         }
 
         return string.IsNullOrWhiteSpace(text) ? rawTranscript : text;
+    }
+
+    private static bool IsNarrationLine(string line)
+    {
+        string trimmed = line.Trim();
+        return trimmed.StartsWith("The user ", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("I should ", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("I will ", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Here is ", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Here's ", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Cleaned text:", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Cleaned version:", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Sure,", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.StartsWith("Certainly,", StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose()

@@ -40,6 +40,17 @@ public sealed class ApprovalCommandClassifierTests
         Assert.Equal(ApprovalCommand.Cancel, ApprovalCommandClassifier.Classify(transcript));
 
     [Theory]
+    [InlineData("use original")]
+    [InlineData("original")]
+    [InlineData("USE RAW")]
+    [InlineData("raw.")]
+    [InlineData("keep original")]
+    [InlineData("revert to original")]
+    [InlineData("revert")]
+    public void Classify_AcceptsEveryUseOriginalVariant(string transcript) =>
+        Assert.Equal(ApprovalCommand.UseOriginal, ApprovalCommandClassifier.Classify(transcript));
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ... ")]

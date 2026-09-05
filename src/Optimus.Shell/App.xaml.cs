@@ -173,6 +173,8 @@ public partial class App : Application
                 }
             };
 
+            _viewModel.DestinationStatusChanged += (_, _) => _phoneSession?.PushDestinations();
+
             try
             {
                 _phoneEndpoint.NarrationSettingsChanged += OnPhoneNarrationSettingsChanged;

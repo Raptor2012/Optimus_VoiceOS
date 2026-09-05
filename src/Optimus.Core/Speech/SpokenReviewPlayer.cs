@@ -159,6 +159,30 @@ public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
         return Task.Run(() => SpeakReview(draft, destinationName, linked.Token), linked.Token);
     }
 
+    /// <summary>Speaks a standalone prompt followed by the chime. Cancellable; returns why it ended.</summary>
+    public Task<SpokenReviewResult> SpeakPromptAsync(
+        string prompt,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+
+        CancellationTokenSource linked;
+        lock (_lock)
+        {
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linked = _cts;
+        }
+
+        return Task.Run(() =>
+        {
+            IReadOnlyList<string> lines = SpeechSegmenter.Split(prompt.Trim());
+            return SpeakLines(lines, linked.Token);
+        }, linked.Token);
+    }
+
     private SpokenReviewResult SpeakReview(string draft, string destinationName, CancellationToken token)
     {
         IReadOnlyList<string> lines;
@@ -171,6 +195,11 @@ public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
             return new SpokenReviewResult(SpokenReviewOutcome.Failed, null, ex.Message);
         }
 
+        return SpeakLines(lines, token);
+    }
+
+    private SpokenReviewResult SpeakLines(IReadOnlyList<string> lines, CancellationToken token)
+    {
         var total = Stopwatch.StartNew();
         var gaps = new List<long>();
         long firstAudioMs = -1;

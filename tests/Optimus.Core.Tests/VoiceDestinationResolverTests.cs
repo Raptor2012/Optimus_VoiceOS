@@ -109,5 +109,16 @@ public sealed class VoiceDestinationResolverTests
         Assert.Throws<ArgumentException>(() => CreateResolver(new VoiceDestinationAlias("codex", "")));
     }
 
+    [Fact]
+    public void Resolve_CasualMentionOfAppInSentenceDoesNotRoute()
+    {
+        var resolver = CreateResolver(new VoiceDestinationAlias("antigravity", "anti-gravity"));
+        var result = resolver.Resolve("Just testing this uh in anti-gravity, do not reply anything, just send this message.");
+
+        Assert.Equal(VoiceDestinationResolutionStatus.Missing, result.Status);
+        Assert.Null(result.DestinationId);
+        Assert.Equal("Just testing this uh in anti-gravity, do not reply anything, just send this message.", result.PromptText);
+    }
+
     private static VoiceDestinationResolver CreateResolver(params VoiceDestinationAlias[] aliases) => new(aliases);
 }

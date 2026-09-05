@@ -102,7 +102,7 @@ public sealed class PhoneSession : IDisposable
     private void OnDestinationsRequested(object? sender, EventArgs e) => PushDestinations();
 
     /// <summary>Sends the destination list with live readiness, so the phone shows the truth.</summary>
-    private void PushDestinations()
+    public void PushDestinations()
     {
         if (_destinations == null)
         {
@@ -386,15 +386,15 @@ public sealed class PhoneSession : IDisposable
 
                 string timings = $"audio {seconds:F1}s · STT {transcription.ElapsedMilliseconds} ms · cleanup {cleanup.ElapsedMilliseconds} ms · total {totalStopwatch.ElapsedMilliseconds} ms";
 
-                _endpoint.SendDraft(transcription.Text, cleanup.Text, timings, targetDestinationId);
+                _endpoint.SendDraft(textToClean, cleanup.Text, timings, targetDestinationId);
                 _endpoint.SendStatus("confirm", "Review the draft");
                 if (_onDraftWithDestination != null)
                 {
-                    _onDraftWithDestination.Invoke(transcription.Text, cleanup.Text, timings, targetDestinationId);
+                    _onDraftWithDestination.Invoke(textToClean, cleanup.Text, timings, targetDestinationId);
                 }
                 else
                 {
-                    _onDraft?.Invoke(transcription.Text, cleanup.Text, timings);
+                    _onDraft?.Invoke(textToClean, cleanup.Text, timings);
                 }
             }
             catch (OperationCanceledException)

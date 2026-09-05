@@ -59,6 +59,42 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
                 "Phone disconnected; review was not spoken.");
         }
 
+        IReadOnlyList<string> lines;
+        try
+        {
+            lines = SpokenReviewPlayer.BuildReviewLines(draft, destinationName);
+        }
+        catch (ArgumentException ex)
+        {
+            return new SpokenReviewResult(SpokenReviewOutcome.Failed, null, ex.Message);
+        }
+
+        return await SpeakLinesInternalAsync(lines, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<SpokenReviewResult> SpeakPromptAsync(
+        string prompt,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+
+        if (!_phoneEndpoint.IsConnected)
+        {
+            return new SpokenReviewResult(
+                SpokenReviewOutcome.Failed,
+                null,
+                "Phone disconnected; prompt was not spoken.");
+        }
+
+        IReadOnlyList<string> lines = SpeechSegmenter.Split(prompt.Trim());
+        return await SpeakLinesInternalAsync(lines, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<SpokenReviewResult> SpeakLinesInternalAsync(
+        IReadOnlyList<string> lines,
+        CancellationToken cancellationToken)
+    {
         CancellationTokenSource linked;
         lock (_lock)
         {
@@ -71,16 +107,6 @@ public sealed class PhoneSpokenReview : ISpokenReview, IDisposable
         CancellationToken token = linked.Token;
         long generation = _phoneEndpoint.NextPlaybackGeneration();
         Volatile.Write(ref _activeGeneration, generation);
-
-        IReadOnlyList<string> lines;
-        try
-        {
-            lines = SpokenReviewPlayer.BuildReviewLines(draft, destinationName);
-        }
-        catch (ArgumentException ex)
-        {
-            return new SpokenReviewResult(SpokenReviewOutcome.Failed, null, ex.Message);
-        }
 
         var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 

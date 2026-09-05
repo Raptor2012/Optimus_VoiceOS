@@ -18,15 +18,15 @@ public class GemmaPromptCleanerTests
 
         Assert.Equal("system", messages[0].Role);
 
-        // Three worked examples, alternating user/assistant, then the live turn last.
-        Assert.Equal(8, messages.Count);
+        // Four worked examples, alternating user/assistant, then the live turn last.
+        Assert.Equal(10, messages.Count);
         Assert.Equal("user", messages[^1].Role);
         Assert.Equal("um add a test", messages[^1].Content);
-        Assert.Equal(3, messages.Count(m => m.Role == "assistant"));
+        Assert.Equal(4, messages.Count(m => m.Role == "assistant"));
     }
 
     [Fact]
-    public void BuildMessages_ExamplesDemonstrateIdentifierFormatting()
+    public void BuildMessages_ExamplesDemonstrateIdentifierFormattingAndInstructionPreservation()
     {
         IReadOnlyList<LlamaServerProcess.ChatMessage> messages =
             GemmaPromptCleaner.BuildMessages("anything");
@@ -36,6 +36,7 @@ public class GemmaPromptCleanerTests
         Assert.Contains("fetchUser", examples, System.StringComparison.Ordinal);
         Assert.Contains("api.ts", examples, System.StringComparison.Ordinal);
         Assert.Contains("--timeout", examples, System.StringComparison.Ordinal);
+        Assert.Contains("do not reply anything, just send this message", examples, System.StringComparison.Ordinal);
     }
 
     [Theory]

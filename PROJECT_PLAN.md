@@ -74,7 +74,21 @@ The phone captures audio; the PC performs STT, cleanup, and agent sending. The p
 
 ### Destination and confirmation
 
-- The user manually configures each destination by selecting an open Windows application window and assigning a label.
+- Destination setup and window binding must work entirely by voice from Windows or Pixel,
+  including the first use. A mouse-only binding step does not satisfy the normal workflow.
+- After an explicit app/alias choice, resolve the window before reading the draft for send
+  approval. If unbound with one candidate, speak its app and window title and ask "Use this
+  window?" Accept "yes" or "use that window" as binding only. With several candidates,
+  announce numbered titles and accept "window two" or an exact unique title. Automatically
+  listen after playback on the initiating device. "Repeat options", "refresh windows", and
+  "cancel" must also work by voice; keep the draft while selecting.
+- Reuse an explicitly bound window while it remains valid, but still require an explicit
+  destination for each new prompt. A closed window returns to spoken window selection.
+  Choosing a window never also submits the prompt: after binding, read the draft and exact
+  destination and separately ask for send approval.
+- Show and speak app plus window/project title, rather than just "Antigravity" or "Codex".
+  Where the adapter cannot identify the conversation inside a window, state that limitation;
+  do not claim that binding an app window selects a particular hidden tab or thread.
 - The selected destination is visible before every send.
 - The app never guesses, substitutes, or silently changes a destination.
 - A destination can be chosen by its explicitly configured voice alias, such as
@@ -207,7 +221,7 @@ Do not build a multi-engine model platform before the application works.
   amend only when real measurements show a concrete limit.
 - After the full PC and phone flows work, compare at most one serious alternative per stage on 20–30 real coding utterances. Replace the initial choice only if measured results are materially better.
 
-Cleanup may remove fillers, repair punctuation/casing, format dictated identifiers, and apply a small personal glossary. It may not invent requirements, select a destination, or reinterpret intent. The user sees and can edit every result before confirmation.
+Cleanup may remove fillers, repair punctuation/casing, format dictated identifiers, and apply a small personal glossary. It may not invent requirements, select a destination, or reinterpret intent. Preserve every instruction, negation, and constraint: "do not reply anything, just send this message" is meaningful content, not filler. Provide a spoken "use original" command that selects the raw prompt (excluding only an explicitly resolved routing prefix), reads it back, and requests fresh approval. The user sees and can edit every result before confirmation.
 
 ## Error handling appropriate for this app
 

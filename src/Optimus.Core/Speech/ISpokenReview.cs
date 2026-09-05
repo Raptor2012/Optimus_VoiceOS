@@ -26,6 +26,11 @@ public interface ISpokenReview
         string destinationName,
         CancellationToken cancellationToken = default);
 
+    /// <summary>Speaks a standalone spoken prompt followed by the approval chime.</summary>
+    Task<SpokenReviewResult> SpeakPromptAsync(
+        string prompt,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Stops speech immediately and silences the device.</summary>
     void Cancel();
 }
