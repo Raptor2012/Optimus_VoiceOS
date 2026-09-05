@@ -13,7 +13,7 @@ public class PushToTalkControllerTests
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture();
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
 
         controller.Start();
 
@@ -49,11 +49,77 @@ public class PushToTalkControllerTests
     }
 
     [Fact]
+    public void ShortTap_ReportsGestureAndEmitsNoDictation()
+    {
+        using var hotkey = new MockHotkeyService();
+        using var audio = new InMemoryAudioCapture();
+        // A threshold this long makes any press in a test a tap.
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.FromMinutes(1));
+
+        controller.Start();
+
+        bool tapped = false;
+        byte[]? capturedData = null;
+        controller.Tapped += (_, _) => tapped = true;
+        controller.AudioCaptured += (_, bytes) => capturedData = bytes;
+
+        hotkey.SimulatePress();
+        audio.AppendSyntheticAudio(8000, 440f);
+        hotkey.SimulateRelease();
+
+        Assert.True(tapped);
+        // The fragment recorded before the key came back up must never reach the pipeline.
+        Assert.Null(capturedData);
+        Assert.False(controller.IsCapturing);
+    }
+
+    [Fact]
+    public void Hold_EmitsDictationAndReportsNoTap()
+    {
+        using var hotkey = new MockHotkeyService();
+        using var audio = new InMemoryAudioCapture();
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
+
+        controller.Start();
+
+        bool tapped = false;
+        byte[]? capturedData = null;
+        controller.Tapped += (_, _) => tapped = true;
+        controller.AudioCaptured += (_, bytes) => capturedData = bytes;
+
+        hotkey.SimulatePress();
+        audio.AppendSyntheticAudio(8000, 440f);
+        hotkey.SimulateRelease();
+
+        Assert.False(tapped);
+        Assert.NotNull(capturedData);
+    }
+
+    [Fact]
+    public void CapturePreparing_FiresBeforeTheDeviceIsClaimed()
+    {
+        using var hotkey = new MockHotkeyService();
+        using var audio = new InMemoryAudioCapture();
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
+
+        controller.Start();
+
+        bool capturingWhenAnnounced = true;
+        controller.CapturePreparing += (_, _) => capturingWhenAnnounced = audio.IsCapturing;
+
+        hotkey.SimulatePress();
+
+        // Anything listening on the shared microphone gets its chance to release it first.
+        Assert.False(capturingWhenAnnounced);
+        Assert.True(audio.IsCapturing);
+    }
+
+    [Fact]
     public void HotkeyRegistrationFailure_TriggersErrorEventAndLeavesControllerReady()
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture();
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
 
         string? errorReceived = null;
         controller.ErrorOccurred += (_, e) =>
@@ -74,7 +140,7 @@ public class PushToTalkControllerTests
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture { SimulateFailureOnStart = true };
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
 
         string? errorReceived = null;
         controller.ErrorOccurred += (_, e) =>
@@ -106,7 +172,7 @@ public class PushToTalkControllerTests
 
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture();
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
 
         controller.Start();
         hotkey.SimulatePress();

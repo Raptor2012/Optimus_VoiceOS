@@ -175,7 +175,7 @@ public class UtteranceGenerationTests
     {
         var capture = new FakeCapture();
         var hotkey = new MockHotkeyService();
-        var controller = new PushToTalkController(hotkey, capture);
+        var controller = new PushToTalkController(hotkey, capture, TimeSpan.Zero);
         controller.Start();
 
         // Run dispatched work inline so the test observes deterministic ordering.

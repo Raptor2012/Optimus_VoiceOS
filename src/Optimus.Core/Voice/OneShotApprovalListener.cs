@@ -22,6 +22,9 @@ public sealed class OneShotApprovalListener : IApprovalListener, IDisposable
     private readonly TimeSpan _dictationInitialTimeout;
     private readonly TimeSpan _dictationMaxDuration;
 
+    private readonly TimeSpan _sessionSilenceDuration;
+    private readonly TimeSpan _sessionWindow;
+
     private CancellationTokenSource? _activeCts;
     private readonly object _lock = new();
     private bool _isListening;
@@ -53,7 +56,9 @@ public sealed class OneShotApprovalListener : IApprovalListener, IDisposable
         TimeSpan? approvalMaxDuration = null,
         TimeSpan? dictationSilenceDuration = null,
         TimeSpan? dictationInitialTimeout = null,
-        TimeSpan? dictationMaxDuration = null)
+        TimeSpan? dictationMaxDuration = null,
+        TimeSpan? sessionSilenceDuration = null,
+        TimeSpan? sessionWindow = null)
     {
         _captureService = captureService ?? throw new ArgumentNullException(nameof(captureService));
         _speechThreshold = speechThreshold;
@@ -65,6 +70,12 @@ public sealed class OneShotApprovalListener : IApprovalListener, IDisposable
         _dictationSilenceDuration = dictationSilenceDuration ?? TimeSpan.FromMilliseconds(1100);
         _dictationInitialTimeout = dictationInitialTimeout ?? TimeSpan.FromMilliseconds(5000);
         _dictationMaxDuration = dictationMaxDuration ?? TimeSpan.FromMilliseconds(20000);
+
+        // A session utterance is ordinary dictation, so it gets the dictation silence window.
+        // The listening window is short by design and re-armed by the caller: it caps the audio
+        // retained while nobody is speaking rather than limiting how long a session may stay open.
+        _sessionSilenceDuration = sessionSilenceDuration ?? TimeSpan.FromMilliseconds(1100);
+        _sessionWindow = sessionWindow ?? TimeSpan.FromSeconds(30);
     }
 
     public Task<byte[]> ListenForApprovalAsync(CancellationToken cancellationToken = default) =>
@@ -72,6 +83,9 @@ public sealed class OneShotApprovalListener : IApprovalListener, IDisposable
 
     public Task<byte[]> ListenForReplacementDictationAsync(CancellationToken cancellationToken = default) =>
         ListenCoreAsync(_dictationSilenceDuration, _dictationInitialTimeout, _dictationMaxDuration, cancellationToken);
+
+    public Task<byte[]> ListenForSessionUtteranceAsync(CancellationToken cancellationToken = default) =>
+        ListenCoreAsync(_sessionSilenceDuration, _sessionWindow, _sessionWindow, cancellationToken);
 
     private async Task<byte[]> ListenCoreAsync(
         TimeSpan silenceDuration,
@@ -141,12 +155,20 @@ public sealed class OneShotApprovalListener : IApprovalListener, IDisposable
                 return Array.Empty<byte>();
             }
 
-            return _captureService.StopCapture();
+            byte[] captured = _captureService.StopCapture();
+
+            // A window that expired without speech carries only room noise. Returning it would
+            // spend a transcription on silence, which callers already treat as the empty case.
+            return hasSpeech ? captured : Array.Empty<byte>();
         }
         finally
         {
             _captureService.AudioChunkAvailable -= OnChunkAvailable;
-            if (_captureService.IsCapturing)
+
+            // Only stop the device if this call still owns it. After Cancel() the capture may
+            // already have been handed to a hotkey hold, and stopping it here would silently
+            // cut the dictation the user is in the middle of speaking.
+            if (!linkedCts.IsCancellationRequested && _captureService.IsCapturing)
             {
                 _captureService.StopCapture();
             }

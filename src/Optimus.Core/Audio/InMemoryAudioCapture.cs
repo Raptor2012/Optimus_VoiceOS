@@ -78,6 +78,31 @@ public sealed class InMemoryAudioCapture : IAudioCaptureService
         AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(bytes, 0.49f));
     }
 
+    /// <summary>
+    /// Appends a run of quiet samples, as a real device does between utterances.
+    /// </summary>
+    /// <remarks>
+    /// Voice-activity detection completes on silence rather than on the absence of data, so a
+    /// simulation that only ever produces loud chunks cannot exercise the path that ends an
+    /// utterance or expires an idle listening window.
+    /// </remarks>
+    public void AppendSilence(int sampleCount)
+    {
+        byte[] bytes;
+        lock (_lock)
+        {
+            if (!_isCapturing)
+            {
+                return;
+            }
+
+            bytes = new byte[sampleCount * sizeof(short)];
+            _buffer.Write(bytes, 0, bytes.Length);
+        }
+
+        AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(bytes, 0f));
+    }
+
     public void AppendAudio(byte[] bytes)
     {
         lock (_lock)

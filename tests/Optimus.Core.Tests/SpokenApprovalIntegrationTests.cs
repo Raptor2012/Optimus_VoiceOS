@@ -86,7 +86,7 @@ public class SpokenApprovalIntegrationTests
 
         var hotkey = new MockHotkeyService();
         var capture = new InMemoryAudioCapture();
-        var controller = new PushToTalkController(hotkey, capture);
+        var controller = new PushToTalkController(hotkey, capture, TimeSpan.Zero);
 
         var transcriber = new FakeTranscriber();
         var cleaner = new FakeCleaner();
@@ -557,7 +557,7 @@ public class SpokenApprovalIntegrationTests
 
         var hotkey = new MockHotkeyService();
         var capture = new InMemoryAudioCapture();
-        var controller = new PushToTalkController(hotkey, capture);
+        var controller = new PushToTalkController(hotkey, capture, TimeSpan.Zero);
 
         var transcriber = new FakeTranscriber();
         var cleaner = new FakeCleaner();
@@ -758,10 +758,31 @@ public class SpokenApprovalIntegrationTests
         private TaskCompletionSource<byte[]>? _activeDictationTcs;
         private readonly object _lock = new();
 
+        private readonly Queue<byte[]> _sessionQueue = new();
+
         public int ListenApprovalCalls { get; private set; }
         public int ListenDictationCalls { get; private set; }
+        public int ListenSessionCalls { get; private set; }
         public int CancelCalls { get; private set; }
         public bool IsListening { get; private set; }
+
+        public void EnqueueSessionUtterance(byte[] audio)
+        {
+            lock (_lock)
+            {
+                _sessionQueue.Enqueue(audio);
+            }
+        }
+
+        /// <summary>Empty means the window closed with no speech, which is the quiet case.</summary>
+        public Task<byte[]> ListenForSessionUtteranceAsync(CancellationToken cancellationToken = default)
+        {
+            lock (_lock)
+            {
+                ListenSessionCalls++;
+                return Task.FromResult(_sessionQueue.Count > 0 ? _sessionQueue.Dequeue() : Array.Empty<byte>());
+            }
+        }
 
         public void EnqueueApproval(byte[] audio)
         {

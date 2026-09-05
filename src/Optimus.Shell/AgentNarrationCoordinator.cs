@@ -25,6 +25,15 @@ public sealed class AgentNarrationCoordinator : IDisposable
     private bool _disposed;
     private volatile bool _muted;
 
+    /// <summary>
+    /// True while narration audio is actually coming out of this PC's speakers.
+    /// </summary>
+    /// <remarks>
+    /// The continuous session reads this to keep the microphone closed while the tool is
+    /// talking, so it never transcribes its own output.
+    /// </remarks>
+    public bool IsSpeakingOnPc => _pcPlayer?.IsPlaying == true;
+
     public void SetMuted(bool muted)
     {
         _muted = muted;

@@ -85,6 +85,18 @@ public sealed class PhoneApprovalListener : IApprovalListener, IDisposable
             _dictationMaxDuration,
             cancellationToken);
 
+    /// <summary>
+    /// Session listening on the phone reuses the redictation path: both are ordinary dictation
+    /// captured without a hold, and the phone already streams continuously while armed.
+    /// </summary>
+    public Task<byte[]> ListenForSessionUtteranceAsync(CancellationToken cancellationToken = default) =>
+        ListenCoreAsync(
+            isRedictation: true,
+            _dictationSilenceDuration,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30),
+            cancellationToken);
+
     private async Task<byte[]> ListenCoreAsync(
         bool isRedictation,
         TimeSpan silenceDuration,

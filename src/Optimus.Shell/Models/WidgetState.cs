@@ -11,5 +11,8 @@ public enum WidgetState
     Error,
     ReadingDraft,
     AwaitingApproval,
-    Redictating
+    Redictating,
+
+    /// <summary>A continuous session is open and waiting for the next utterance, hands free.</summary>
+    SessionListening
 }

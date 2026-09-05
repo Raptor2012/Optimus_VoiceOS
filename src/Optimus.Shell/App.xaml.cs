@@ -213,6 +213,10 @@ public partial class App : Application
             viewModel.AgentRunStarting += OnAgentRunStarting;
             viewModel.AgentRunCancelled += OnAgentRunCancelled;
             viewModel.NarrationMuteChanged += OnNarrationMuteChanged;
+
+            // Keeps the session microphone shut while the tool is speaking.
+            AgentNarrationCoordinator narration = _narration;
+            viewModel.NarrationActive = () => narration.IsSpeakingOnPc;
         }
 
         if (manualDraft != null)

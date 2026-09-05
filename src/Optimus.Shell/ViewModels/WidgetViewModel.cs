@@ -48,6 +48,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     private int _spokenReviewGeneration;
     private IApprovalListener? _approvalListener;
     private IApprovalListener? _phoneApprovalListener;
+    private bool _isSessionOpen;
+    private CancellationTokenSource? _sessionCts;
     private VoiceDestinationResolver? _destinationResolver;
     private int _isSending;
     private string _lastApprovalStatus = string.Empty;
@@ -83,9 +85,51 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(StatusBadgeColor));
                 OnPropertyChanged(nameof(IsDraftVisible));
                 OnPropertyChanged(nameof(IsConfirmPanelVisible));
+                OnPropertyChanged(nameof(IsSessionListening));
+                OnPropertyChanged(nameof(SessionBadgeText));
+                OnPropertyChanged(nameof(SessionBadgeColor));
             }
         }
     }
+
+    /// <summary>
+    /// True while a continuous session is open, whether or not it is listening this instant.
+    /// </summary>
+    /// <remarks>
+    /// A session opens on the first real hold and closes only on a hotkey tap. Leaving it open
+    /// never authorises a send: a session utterance produces a draft and still has to clear the
+    /// same spoken approval against the same named destination as a held one.
+    /// </remarks>
+    public bool IsSessionOpen
+    {
+        get => _isSessionOpen;
+        private set
+        {
+            if (_isSessionOpen != value)
+            {
+                _isSessionOpen = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsSessionListening));
+                OnPropertyChanged(nameof(SessionBadgeText));
+                OnPropertyChanged(nameof(SessionBadgeColor));
+            }
+        }
+    }
+
+    /// <summary>True when the session is open and actually waiting for speech right now.</summary>
+    public bool IsSessionListening => _isSessionOpen && State == WidgetState.SessionListening;
+
+    /// <summary>Distinguishes a session that is listening from one that is merely open.</summary>
+    public string SessionBadgeText =>
+        IsSessionListening ? $"SESSION LISTENING — TAP {HotkeyLabel} TO END" : "SESSION OPEN";
+
+    public string SessionBadgeColor => IsSessionListening ? "#30D158" : "#6B7F8F";
+
+    /// <summary>
+    /// Reports whether agent narration is currently audible, so the session does not transcribe
+    /// the tool's own speech. Left unset, the session assumes nothing is playing.
+    /// </summary>
+    public Func<bool>? NarrationActive { get; set; }
 
     public string StatusLine
     {
@@ -446,6 +490,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
         _controller.StateChanged += OnCaptureStateChanged;
         _controller.AudioCaptured += OnAudioCaptured;
         _controller.ErrorOccurred += OnCaptureError;
+        _controller.Tapped += OnHotkeyTapped;
+        _controller.CapturePreparing += OnCapturePreparing;
     }
 
     public void DetachController()
@@ -455,6 +501,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
             _controller.StateChanged -= OnCaptureStateChanged;
             _controller.AudioCaptured -= OnAudioCaptured;
             _controller.ErrorOccurred -= OnCaptureError;
+            _controller.Tapped -= OnHotkeyTapped;
+            _controller.CapturePreparing -= OnCapturePreparing;
             _controller = null;
         }
     }
@@ -1018,6 +1066,149 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
         });
     }
 
+    /// <summary>A tap, unlike a hold, carries no speech: it ends an open session.</summary>
+    private void OnHotkeyTapped(object? sender, EventArgs e) =>
+        _dispatchAction(() =>
+        {
+            if (IsSessionOpen)
+            {
+                EndSession($"Session ended — Hold {HotkeyLabel} to speak");
+            }
+        });
+
+    /// <summary>
+    /// Releases the shared microphone so a hold always wins over session listening.
+    /// </summary>
+    private void OnCapturePreparing(object? sender, EventArgs e) => _approvalListener?.Cancel();
+
+    /// <summary>Opens a continuous session and starts waiting for follow-up speech.</summary>
+    private void OpenSession()
+    {
+        if (_approvalListener == null || IsSessionOpen)
+        {
+            return;
+        }
+
+        IsSessionOpen = true;
+        _sessionCts?.Dispose();
+        _sessionCts = new CancellationTokenSource();
+        CancellationToken token = _sessionCts.Token;
+        _ = Task.Run(() => RunSessionLoopAsync(token), token);
+    }
+
+    /// <summary>Closes the session and returns the widget to plain push-to-talk.</summary>
+    public void EndSession(string status)
+    {
+        _sessionCts?.Cancel();
+        _sessionCts?.Dispose();
+        _sessionCts = null;
+        IsSessionOpen = false;
+        _approvalListener?.Cancel();
+
+        if (State == WidgetState.SessionListening)
+        {
+            State = HasDraft ? WidgetState.Confirm : WidgetState.Idle;
+        }
+
+        StatusLine = status;
+        _controller?.Start();
+    }
+
+    /// <summary>
+    /// Waits for the next hands-free utterance whenever the widget is at rest, and feeds it into
+    /// the same pipeline a held capture uses.
+    /// </summary>
+    /// <remarks>
+    /// The loop only listens from a resting state, never while the tool is speaking, processing,
+    /// sending, or already listening for an approval. Each listening window is short and returns
+    /// empty on silence, which bounds how much audio is ever retained while nobody is talking.
+    /// </remarks>
+    private async Task RunSessionLoopAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested && IsSessionOpen)
+        {
+            if (!CanListenInSession())
+            {
+                try
+                {
+                    await Task.Delay(150, token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                continue;
+            }
+
+            IApprovalListener? listener = _approvalListener;
+            if (listener == null)
+            {
+                return;
+            }
+
+            _dispatchAction(() =>
+            {
+                if (IsSessionOpen && CanListenInSession())
+                {
+                    State = WidgetState.SessionListening;
+                    StatusLine = $"Session open — just speak, or tap {HotkeyLabel} to end";
+                }
+            });
+
+            byte[] audio;
+            try
+            {
+                audio = await listener.ListenForSessionUtteranceAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (InvalidOperationException)
+            {
+                // The listener is busy with an approval; wait for it rather than fighting it.
+                continue;
+            }
+            catch (Exception)
+            {
+                _dispatchAction(() => EndSession("Session listening failed — hold to speak"));
+                return;
+            }
+
+            if (token.IsCancellationRequested || !IsSessionOpen)
+            {
+                return;
+            }
+
+            if (audio.Length == 0)
+            {
+                continue;
+            }
+
+            int generation = 0;
+            CancellationToken processingToken = default;
+            _dispatchAction(() =>
+            {
+                generation = BeginNewUtterance();
+                _draftOriginPhone = false;
+                processingToken = _processingCts!.Token;
+            });
+
+            ProcessAudioBytes(audio, generation, processingToken);
+        }
+    }
+
+    /// <summary>The session may only take the microphone when nothing else needs it.</summary>
+    private bool CanListenInSession() =>
+        IsSessionOpen &&
+        !IsSpeakingReview &&
+        NarrationActive?.Invoke() != true &&
+        _controller?.AudioCaptureService.IsCapturing != true &&
+        _approvalListener?.IsListening != true &&
+        State is WidgetState.Idle or WidgetState.Confirm or WidgetState.Sent
+            or WidgetState.Error or WidgetState.SessionListening;
+
     /// <summary>
     /// Abandons any in-flight processing and claims a new utterance generation.
     /// </summary>
@@ -1088,6 +1279,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
             generation = BeginNewUtterance();
             _draftOriginPhone = false;
             token = _processingCts!.Token;
+            // The first real hold opens a session; every later utterance can be hands free.
+            OpenSession();
         });
 
         ProcessAudioBytes(audioBytes, generation, token);
@@ -1763,6 +1956,9 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     public void Dispose()
     {
         DetachController();
+        _sessionCts?.Cancel();
+        _sessionCts?.Dispose();
+        _sessionCts = null;
         _approvalListener?.Cancel();
         if (_approvalListener is IDisposable disposableListener)
         {

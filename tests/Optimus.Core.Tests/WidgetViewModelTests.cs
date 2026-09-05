@@ -26,7 +26,7 @@ public class WidgetViewModelTests
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture();
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
         using var vm = new WidgetViewModel(action => action());
 
         vm.AttachController(controller);
@@ -44,7 +44,7 @@ public class WidgetViewModelTests
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture();
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
         using var vm = new WidgetViewModel(action => action());
 
         vm.AttachController(controller);
@@ -65,7 +65,7 @@ public class WidgetViewModelTests
     {
         using var hotkey = new MockHotkeyService();
         using var audio = new InMemoryAudioCapture { SimulateFailureOnStart = true };
-        using var controller = new PushToTalkController(hotkey, audio);
+        using var controller = new PushToTalkController(hotkey, audio, TimeSpan.Zero);
         using var vm = new WidgetViewModel(action => action());
 
         vm.AttachController(controller);

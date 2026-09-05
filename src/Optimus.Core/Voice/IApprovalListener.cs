@@ -23,6 +23,17 @@ public interface IApprovalListener
     /// </summary>
     Task<byte[]> ListenForReplacementDictationAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Listens for the next utterance in an open continuous session, where no hotkey hold
+    /// precedes the speech.
+    /// </summary>
+    /// <remarks>
+    /// Returns an empty array when the listening window expires with no speech. That is the
+    /// ordinary quiet case, not an error: the caller simply asks again, which bounds how much
+    /// audio is ever held in memory while a session sits idle.
+    /// </remarks>
+    Task<byte[]> ListenForSessionUtteranceAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Cancels active listening immediately and silences audio capture.</summary>
     void Cancel();
 }
