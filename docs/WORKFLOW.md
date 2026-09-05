@@ -3,48 +3,94 @@
 The user controls the Claude, Antigravity/Gemini, and Codex sessions. Sol normally reviews only;
 the user's September 5 request explicitly authorizes Codex implementation for this pass.
 
-## Current handover — voice-first UX pass, September 5
+## Current handover — dogfooding pass, September 5
 
-Workspace: `D:\SamHaydenVoiceTool\Optimus_VoiceOS`, main, based on `c01d87d`.
-This section supersedes the historical handoff below. Do not redo S007/S008 phone approval.
+Workspace: `D:\SamHaydenVoiceTool\Optimus_VoiceOS`, main. This supersedes the section it replaces.
+Head at handover: `91b5515`. 389 tests pass (`dotnet test Optimus.sln -c Release`).
 
-Implemented: remembered agent and exact-window titles, voice aliases, first-use lone-window binding,
-spoken destination recovery, spoken draft edits with fresh review, cleanup off by default, short/full
-review preference, shared PC/Pixel pipeline, phone saved address/launch reconnect, matching dark UI,
-and a modest lower-register metallic commander effect using the existing Piper engine.
+### What this pass did
 
-Verification: 362 .NET tests passed including the window-sizing adjustment; Android unit
-tests and debug APK build succeeded. Actual Piper warm first-byte median 248 ms, RTF 0.165 over five
-runs. This measures engine bytes, not first audible output. Windows app launched, then was stopped
-for rebuilding. Computer-use capture failed (`no screenshot targets found`); visual QA unverified.
-ADB reported no attached Pixel, so the new APK has NOT been installed or visually tested there.
+Ran the first real end-to-end dogfood on the PC path and fixed what it found. Every fix below came
+from actually speaking to the tool, not from reading code.
 
-Next actions, no architecture detour:
+- `a182db3` — continuous session. The first hold opens it; afterwards utterances need no key. A
+  tap under 350 ms closes it. Session listening reuses the approval voice-activity detection in
+  short re-armed windows, so idle audio is never accumulated.
+- `fe3a01f` — a phone that announced a capture and dropped left the widget stuck in
+  "Listening on Pixel..." forever. `PhoneSession` saw the disconnect but only wrote a status
+  string. Pre-existing, not caused by this pass.
+- `66fd0f4` — regression from the session work: session listening raised the same capture event a
+  hold raises, so the widget announced "release key to finish" with no key down, and the loop then
+  refused to act on a state only a key release could clear. Unrecoverable without a restart.
+- `7203fc3` — `SendAsync` reported `Sent` when `SendInput` returned success, which says nothing
+  about where the characters went. With Antigravity's project list focused, a draft became
+  type-ahead navigation: the prompt never reached the conversation, the projects panel opened, and
+  narration read the revealed menu items aloud as agent activity. Delivery is now verified before
+  Return is pressed.
+- `115a6fc` — raising a window leaves focus wherever the app put it, so the caret is now placed in
+  the message box first. The box is found structurally, not by name: keyboard focusable, enabled,
+  writable value, real screen space. Verified live — Claude `Edit 'Prompt'`, Antigravity
+  `ComboBox 'Message input'`, ChatGPT `Edit 'Do anything'`. Property-condition searches are
+  unreliable on these trees and miss the composer; the full descendant walk finds it.
+- `91b5515` — approval matching accepted only exact phrases, so "send this to Claude" failed while
+  the tool itself reads out "Send this to Claude, or redictate?". Replies are now read as words:
+  loose matching for recoverable outcomes, and approval must lead the reply. Writing the refusal
+  guard exposed a live hole — normalisation splits "don't" into "don" and "t", so "don't send
+  that" had been classifying as approval.
 
-1. Run `dotnet test Optimus.sln -c Release`, then launch the shell and dogfood one actual prompt.
-2. Install `android/app/build/outputs/apk/debug/app-debug.apk` when the Pixel reconnects; verify
-   same voice workflow, matching UI, remembered destination and spoken correction.
-3. Add a real continuous voice-session / follow-up initiation path. The initial PC hold / Pixel
-   start-stop tap is still required. Do not claim wake-word or barge-in currently works.
-4. Implement actual per-app conversation/task navigation. Saved aliases target window titles only;
-   they cannot select hidden tasks/tabs in Claude, Antigravity or Codex.
-5. DONE, September 5. The commander A/B listen happened. Nine candidates were rendered through the
-   real synthesizer on the actual review line: five pitch/resonance points (0.88/0.14 to 1.00/0.00)
-   on the British base, then four deadpan takes with the pitch shift and tremolo removed entirely
-   in favour of band limiting plus compression, on `en_US-ryan-high` and `en_US-joe-medium`.
-   The user chose the already-shipped `0.93 / 0.06` on `en_GB-northern_english_male`, so
-   `VoiceProfile.Default` is unchanged and confirmed rather than assumed. Do not reopen this.
-   Known accepted cost: the pitch coloration stretches a review roughly 40 percent (10.8s versus
-   7.5s for the same words on the flat ryan take). The user was told and accepted it.
-   Voice cloning stays out of scope. Requests to train on Optimus Prime or TARS audio were declined
-   because both are performances by living actors (Peter Cullen, Bill Irwin); the character-voice
-   models in the Home Assistant community thread are unlicensed clones and must not be used.
-   If a base voice change is ever wanted, `OPTIMUS_TTS_VOICE` overrides the model path with no code
-   change, and Bryce Beattie's public-domain LibriVox-trained voices are a clean source.
+### Decisions the user made in this pass
 
-Settings: `%LOCALAPPDATA%\OptimusVoiceOS\preferences.json` (no prompt/audio history). Voice commands
-are documented in README and PROJECT_PLAN. Unmute affects subsequent runs, not cancelled narration.
-Continue checking the 5h allowance; below 5% remaining, update this handover and stop implementation.
+- Commander voice: kept the shipped `0.93 / 0.06` on `en_GB-northern_english_male` after a nine
+  candidate A/B. Accepted that pitch coloration costs ~40 percent review length. Do not reopen.
+- Voice cloning is out of scope. Requests to train on Optimus Prime and TARS audio were declined
+  because both are living actors' performances; the Home Assistant community thread's voices are
+  unlicensed character clones. Bryce Beattie's public-domain LibriVox voices are a clean source if
+  a base change is ever wanted; `OPTIMUS_TTS_VOICE` overrides the model path with no code change.
+- Continuous session: every hold opens one; only a hotkey tap closes it; no idle timeout. The user
+  was told the mic then stays open indefinitely and accepted it.
+
+### Next, agreed with the user and not yet started
+
+1. LLM intent interpretation. The user finds deterministic command matching poor UX and wants
+   Gemma to interpret intent. Agreed shape: keep the deterministic matcher as an instant fast
+   path, fall through to Gemma for anything it does not recognise. Note Gemma is currently not
+   running at all — `llama-server` only warms when cleanup is enabled, which is off by default —
+   so this means keeping it resident.
+2. Voice barge-in. The user wants to interrupt speech by talking, with the interruption
+   interpreted as a new command (approval, correction, or fresh prompt). The blocker is acoustic,
+   not logical: the mic is muted during TTS precisely so it cannot hear itself. The user uses
+   headphones and speakers depending on the day, and chose: build the headphone path properly,
+   gate it behind a setting defaulting to off, and do not claim it works on speakers until
+   acoustic echo cancellation is proven.
+3. Live workspace index. The user's idea, and a good one: the UIA walk already enumerates every
+   project and conversation name in each app. Keeping that indexed gives deterministic matching
+   over a vocabulary that is the actual workspace rather than memorised phrases. This is also the
+   per-app conversation navigation that was previously listed as unimplemented.
+
+### Known and unfixed
+
+- Parakeet mistranscribes product names: "Antigravity" becomes "anti-gravity", "Optimus VoiceOS"
+  became "Optimus voice or this project". No intent model fixes this; it needs a vocabulary bias
+  list or cleanup repair.
+- The ChatGPT app exposes two writable boxes; the one holding the caret wins. If neither holds it
+  the send is refused rather than guessed.
+- There is no log file anywhere in the shell. Diagnosis during this pass was done by dumping the
+  widget's own window over UI Automation and inspecting processes and sockets, which shows current
+  state but never how it was reached. A small rolling log of state transitions would have saved
+  several round trips and is worth adding before the next dogfood.
+- The UIA send verification and message-box focusing have no unit coverage; they read live
+  focused elements and need a real send to exercise.
+- Computer-use cannot attach to the widget window, so no screenshot QA was possible. The session
+  badge has never been visually confirmed, only proven to parse.
+
+### Useful during dogfooding
+
+Read the widget's own state without a screenshot, using the project's UIA source against
+`Optimus.Shell`. This is how every wedge in this pass was diagnosed. A scratch probe that walks a
+window and prints its visible text takes about ten lines against `Optimus.Providers`.
+
+The shell holds DLL locks; stop it before building. Settings live at
+`%LOCALAPPDATA%\OptimusVoiceOS\preferences.json`.
 
 ## Starting work
 
