@@ -29,6 +29,18 @@ public sealed partial class WidgetViewModel
         get => _preferences.ShortReview;
         set { _preferences.ShortReview = value; OnPropertyChanged(); SavePreferences(); }
     }
+    /// <summary>
+    /// Whether speaking interrupts the tool mid-sentence instead of waiting for it to finish.
+    /// </summary>
+    /// <remarks>
+    /// Requires the microphone to stay open while the tool talks, so it is only safe on
+    /// headphones. On speakers the microphone hears the tool and interrupts it constantly.
+    /// </remarks>
+    public bool BargeInEnabled
+    {
+        get => _preferences.BargeInEnabled;
+        set { _preferences.BargeInEnabled = value; OnPropertyChanged(); SavePreferences(); }
+    }
     public bool ShowDetails
     {
         get => _showDetails;
@@ -175,6 +187,8 @@ public sealed partial class WidgetViewModel
                 break;
             case "cleanupOn": CleanupEnabled = true; break;
             case "cleanupOff": CleanupEnabled = false; break;
+            case "interruptOn": BargeInEnabled = true; break;
+            case "interruptOff": BargeInEnabled = false; break;
             case "shortReview": ShortReview = true; break;
             case "fullReview": ShortReview = false; break;
             case "detailsOn": ShowDetails = true; break;

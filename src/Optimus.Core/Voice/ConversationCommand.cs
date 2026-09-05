@@ -9,6 +9,8 @@ public sealed record ConversationCommand(string Kind, string Value = "", string 
         string lower = input.ToLowerInvariant();
         string? kind = lower switch
         {
+            "interrupt on" or "let me interrupt" => "interruptOn",
+            "interrupt off" or "stop interrupting" => "interruptOff",
             "cleanup on" => "cleanupOn",
             "cleanup off" => "cleanupOff",
             "full readback" or "read everything" => "fullReview",

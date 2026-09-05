@@ -13,6 +13,16 @@ public sealed class PersonalSettings
     public string? DestinationId { get; set; }
     public bool CleanupEnabled { get; set; }
     public bool ShortReview { get; set; }
+
+    /// <summary>
+    /// Whether speaking may interrupt the tool mid-sentence.
+    /// </summary>
+    /// <remarks>
+    /// Off by default because it requires the microphone to stay open while the speaker plays.
+    /// On headphones nothing leaks back and anything heard is genuinely the user. On speakers the
+    /// microphone hears the tool itself, so this must stay off until echo cancellation exists.
+    /// </remarks>
+    public bool BargeInEnabled { get; set; }
     public Dictionary<string, string> WindowTitles { get; set; } = new();
     public Dictionary<string, SavedVoiceTarget> Aliases { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

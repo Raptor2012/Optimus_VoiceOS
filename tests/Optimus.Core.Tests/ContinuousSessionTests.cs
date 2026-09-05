@@ -124,6 +124,28 @@ public class ContinuousSessionTests
         Assert.Contains("release key", viewModel.StatusLine, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void BargeIn_IsOffUntilTheUserAsksForIt()
+    {
+        using var viewModel = new WidgetViewModel(action => action());
+
+        // Interrupting needs the microphone open while the tool talks, which only holds up on
+        // headphones. Defaulting it on would make the tool interrupt itself through speakers.
+        Assert.False(viewModel.BargeInEnabled);
+
+        viewModel.BargeInEnabled = true;
+        Assert.True(viewModel.BargeInEnabled);
+    }
+
+    [Fact]
+    public void InterruptCommands_ToggleBargeIn()
+    {
+        Assert.Equal("interruptOn", ConversationCommand.Parse("interrupt on")?.Kind);
+        Assert.Equal("interruptOn", ConversationCommand.Parse("let me interrupt")?.Kind);
+        Assert.Equal("interruptOff", ConversationCommand.Parse("interrupt off")?.Kind);
+        Assert.Equal("interruptOff", ConversationCommand.Parse("stop interrupting")?.Kind);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (int i = 0; i < 200 && !condition(); i++)

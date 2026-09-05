@@ -1161,7 +1161,9 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
 
             _dispatchAction(() =>
             {
-                if (IsSessionOpen && CanListenInSession())
+                // While barging in through a readback the speech owns the state; announcing
+                // session listening there would replace what the user is being read.
+                if (IsSessionOpen && CanListenInSession() && State != WidgetState.ReadingDraft)
                 {
                     State = WidgetState.SessionListening;
                     StatusLine = $"Session open — just speak, or tap {HotkeyLabel} to end";
@@ -1202,6 +1204,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
             CancellationToken processingToken = default;
             _dispatchAction(() =>
             {
+                // BeginNewUtterance already silences the readback and any agent narration, so an
+                // interruption stops the tool talking as a consequence of being heard.
                 generation = BeginNewUtterance();
                 _draftOriginPhone = false;
                 processingToken = _processingCts!.Token;
@@ -1236,14 +1240,32 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     }
 
     /// <summary>The session may only take the microphone when nothing else needs it.</summary>
-    private bool CanListenInSession() =>
-        IsSessionOpen &&
-        !IsSpeakingReview &&
-        NarrationActive?.Invoke() != true &&
-        _controller?.AudioCaptureService.IsCapturing != true &&
-        _approvalListener?.IsListening != true &&
-        State is WidgetState.Idle or WidgetState.Confirm or WidgetState.Sent
-            or WidgetState.Error or WidgetState.SessionListening;
+    /// <remarks>
+    /// Without barge-in the tool stops listening while it talks, so it cannot transcribe itself.
+    /// With barge-in the microphone stays open through the readback, which only holds up on
+    /// headphones; on speakers the tool hears its own voice and interrupts itself immediately.
+    /// An approval listener is never pre-empted either way, because it is already listening.
+    /// </remarks>
+    private bool CanListenInSession()
+    {
+        if (!IsSessionOpen ||
+            _controller?.AudioCaptureService.IsCapturing == true ||
+            _approvalListener?.IsListening == true)
+        {
+            return false;
+        }
+
+        if (BargeInEnabled)
+        {
+            return State is WidgetState.Idle or WidgetState.Confirm or WidgetState.Sent
+                or WidgetState.Error or WidgetState.SessionListening or WidgetState.ReadingDraft;
+        }
+
+        return !IsSpeakingReview &&
+            NarrationActive?.Invoke() != true &&
+            State is WidgetState.Idle or WidgetState.Confirm or WidgetState.Sent
+                or WidgetState.Error or WidgetState.SessionListening;
+    }
 
     /// <summary>
     /// Abandons any in-flight processing and claims a new utterance generation.
