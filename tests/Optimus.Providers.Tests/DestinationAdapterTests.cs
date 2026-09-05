@@ -194,6 +194,13 @@ public class DestinationAdapterTests
         Assert.Equal(ExpectedProcessNames, registry.Adapters.Select(a => a.ProcessName).ToArray());
     }
 
+    [Fact]
+    public void IsTargetForeground_RejectsInvalidHandle()
+    {
+        Assert.False(WindowsAppAdapter.IsTargetForeground(IntPtr.Zero));
+        Assert.False(WindowsAppAdapter.IsTargetForeground(new IntPtr(0x12345678)));
+    }
+
     /// <summary>
     /// Mirrors <see cref="WindowsAppAdapter"/>'s decision logic with the Win32 calls replaced,
     /// so the rules can be tested without real windows or stealing focus from the test run.

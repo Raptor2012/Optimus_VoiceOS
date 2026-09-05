@@ -31,8 +31,8 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
     /// <summary>Characters per SendInput batch; large batches get dropped by some apps.</summary>
     private const int ChunkSize = 200;
 
-    private const int FocusAttempts = 10;
-    private const int FocusPollMs = 30;
+    private const int FocusAttempts = 20;
+    private const int FocusPollMs = 25;
 
     private readonly object _lock = new();
     private WindowCandidate? _bound;
@@ -191,7 +191,7 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
 
         try
         {
-            if (!Focus(target.Hwnd))
+            if (!Focus(target.Hwnd, target.ProcessId))
             {
                 stopwatch.Stop();
                 return new SendResult(
@@ -204,7 +204,7 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
 
             // Re-check the foreground right before typing: if focus moved in the settle window,
             // the keystrokes would land in whatever is now in front.
-            if (NativeWindowApi.GetForegroundWindow() != target.Hwnd)
+            if (!IsTargetForeground(target.Hwnd, target.ProcessId))
             {
                 stopwatch.Stop();
                 return new SendResult(
@@ -213,13 +213,13 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
                     stopwatch.ElapsedMilliseconds);
             }
 
-            if (!TypeText(draft.Text, target.Hwnd, out string typeDetail))
+            if (!TypeText(draft.Text, target.Hwnd, target.ProcessId, out string typeDetail))
             {
                 stopwatch.Stop();
                 return new SendResult(SendStatus.InputRejected, typeDetail, stopwatch.ElapsedMilliseconds);
             }
 
-            if (NativeWindowApi.GetForegroundWindow() != target.Hwnd)
+            if (!IsTargetForeground(target.Hwnd, target.ProcessId))
             {
                 stopwatch.Stop();
                 return new SendResult(
@@ -251,49 +251,133 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
     }
 
     /// <summary>
+    /// Checks whether the target window or any of its root ancestors or owned popups/sub-windows
+    /// is currently the foreground window on Windows.
+    /// </summary>
+    public static bool IsTargetForeground(IntPtr hWnd, int targetPid = 0)
+    {
+        IntPtr fg = NativeWindowApi.GetForegroundWindow();
+        if (fg == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (fg == hWnd)
+        {
+            return true;
+        }
+
+        IntPtr root = NativeWindowApi.GetAncestor(fg, NativeWindowApi.GA_ROOT);
+        if (root == hWnd)
+        {
+            return true;
+        }
+
+        IntPtr rootOwner = NativeWindowApi.GetAncestor(fg, NativeWindowApi.GA_ROOTOWNER);
+        if (rootOwner == hWnd)
+        {
+            return true;
+        }
+
+        if (targetPid > 0)
+        {
+            uint threadId = NativeWindowApi.GetWindowThreadProcessId(fg, out uint fgPid);
+            if (threadId != 0 && fgPid == (uint)targetPid)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Brings the window to the foreground and confirms it actually got there.
     /// </summary>
     /// <remarks>
     /// <c>SetForegroundWindow</c> can return true without taking focus under Windows'
-    /// foreground-lock rules, so its return value is not trusted. Attaching to the target's
-    /// input queue lifts the restriction, and the result is verified by polling
-    /// <c>GetForegroundWindow</c>.
+    /// foreground-lock rules, so its return value is not trusted. Attaching to the active
+    /// foreground and target input queues, pulsing an Alt keystroke, and using Z-order
+    /// promotion lifts the restriction, verified by polling <c>GetForegroundWindow</c>.
     /// </remarks>
-    private static bool Focus(IntPtr hWnd)
+    private static bool Focus(IntPtr hWnd, int targetPid = 0)
     {
+        if (hWnd == IntPtr.Zero || !NativeWindowApi.IsWindow(hWnd))
+        {
+            return false;
+        }
+
         if (NativeWindowApi.IsIconic(hWnd))
         {
             NativeWindowApi.ShowWindow(hWnd, NativeWindowApi.SW_RESTORE);
         }
+        else
+        {
+            NativeWindowApi.ShowWindow(hWnd, NativeWindowApi.SW_SHOW);
+        }
 
+        if (IsTargetForeground(hWnd, targetPid))
+        {
+            return true;
+        }
+
+        IntPtr fgWnd = NativeWindowApi.GetForegroundWindow();
+        uint fgThread = fgWnd != IntPtr.Zero ? NativeWindowApi.GetWindowThreadProcessId(fgWnd, out _) : 0;
         uint currentThread = NativeWindowApi.GetCurrentThreadId();
         uint targetThread = NativeWindowApi.GetWindowThreadProcessId(hWnd, out _);
-        bool attached = false;
+
+        bool attachedFg = false;
+        bool attachedTarget = false;
 
         try
         {
-            if (currentThread != targetThread)
+            NativeWindowApi.AllowSetForegroundWindow(NativeWindowApi.ASFW_ANY);
+            NativeWindowApi.SystemParametersInfo(NativeWindowApi.SPI_SETFOREGROUNDLOCKTIMEOUT, 0, IntPtr.Zero, 0);
+
+            if (fgThread != 0 && fgThread != currentThread)
             {
-                attached = NativeWindowApi.AttachThreadInput(currentThread, targetThread, true);
+                attachedFg = NativeWindowApi.AttachThreadInput(currentThread, fgThread, true);
             }
+
+            if (targetThread != 0 && targetThread != currentThread)
+            {
+                attachedTarget = NativeWindowApi.AttachThreadInput(currentThread, targetThread, true);
+            }
+
+            NativeWindowApi.BypassForegroundLock();
+
+            NativeWindowApi.SetWindowPos(hWnd, NativeWindowApi.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeWindowApi.SWP_NOMOVE | NativeWindowApi.SWP_NOSIZE | NativeWindowApi.SWP_SHOWWINDOW);
+            NativeWindowApi.SetWindowPos(hWnd, NativeWindowApi.HWND_NOTOPMOST, 0, 0, 0, 0,
+                NativeWindowApi.SWP_NOMOVE | NativeWindowApi.SWP_NOSIZE | NativeWindowApi.SWP_SHOWWINDOW);
+
+            NativeWindowApi.BringWindowToTop(hWnd);
+            NativeWindowApi.SetForegroundWindow(hWnd);
+            NativeWindowApi.SwitchToThisWindow(hWnd, true);
 
             for (int attempt = 0; attempt < FocusAttempts; attempt++)
             {
-                NativeWindowApi.SetForegroundWindow(hWnd);
-
-                if (NativeWindowApi.GetForegroundWindow() == hWnd)
+                if (IsTargetForeground(hWnd, targetPid))
                 {
                     return true;
                 }
 
                 Thread.Sleep(FocusPollMs);
+
+                NativeWindowApi.SetForegroundWindow(hWnd);
+                NativeWindowApi.BringWindowToTop(hWnd);
             }
 
-            return NativeWindowApi.GetForegroundWindow() == hWnd;
+            return IsTargetForeground(hWnd, targetPid);
         }
         finally
         {
-            if (attached)
+            if (attachedFg)
+            {
+                NativeWindowApi.AttachThreadInput(currentThread, fgThread, false);
+            }
+
+            if (attachedTarget)
             {
                 NativeWindowApi.AttachThreadInput(currentThread, targetThread, false);
             }
@@ -304,7 +388,7 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
     /// Types the draft as Unicode keystrokes, keeping newlines as Shift+Enter so an embedded
     /// line break cannot submit the prompt early.
     /// </summary>
-    private bool TypeText(string text, IntPtr expectedForeground, out string detail)
+    private bool TypeText(string text, IntPtr expectedForeground, int expectedPid, out string detail)
     {
         detail = string.Empty;
 
@@ -342,7 +426,7 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
                     return false;
                 }
 
-                if (NativeWindowApi.GetForegroundWindow() != expectedForeground)
+                if (!IsTargetForeground(expectedForeground, expectedPid))
                 {
                     detail = $"{DisplayName} lost focus mid-typing; the prompt was not submitted.";
                     return false;
