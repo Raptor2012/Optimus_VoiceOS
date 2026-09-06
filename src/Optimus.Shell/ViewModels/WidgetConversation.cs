@@ -46,6 +46,7 @@ public sealed partial class WidgetViewModel
         get => _showDetails;
         set { _showDetails = value; OnPropertyChanged(); }
     }
+    public Action? RequestOpenDetails { get; set; }
     public event Action<bool>? NarrationMuteChanged;
 
     public void LoadPreferences(string path)
@@ -196,7 +197,10 @@ public sealed partial class WidgetViewModel
             case "interruptOff": BargeInEnabled = false; break;
             case "shortReview": ShortReview = true; break;
             case "fullReview": ShortReview = false; break;
-            case "detailsOn": ShowDetails = true; break;
+            case "detailsOn":
+                ShowDetails = true;
+                RequestOpenDetails?.Invoke();
+                break;
             case "detailsOff": ShowDetails = false; break;
             case "mute": NarrationMuteChanged?.Invoke(true); break;
             case "unmute": NarrationMuteChanged?.Invoke(false); break;
