@@ -154,7 +154,7 @@ public partial class VoiceOrb : UserControl
 
     private bool IsActiveState => WidgetState is WidgetState.Listening or WidgetState.SessionListening
         or WidgetState.Processing or WidgetState.ReadingDraft or WidgetState.Redictating
-        or WidgetState.Sending;
+        or WidgetState.Sending or WidgetState.Interrupted or WidgetState.AwaitingApproval;
 
     private void OnRender(object? sender, EventArgs e)
     {

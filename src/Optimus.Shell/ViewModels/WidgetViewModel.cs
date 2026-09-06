@@ -339,7 +339,30 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     public string NarrationStatus
     {
         get => _narrationStatus;
-        set { if (_narrationStatus != value) { _narrationStatus = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasNarrationStatus)); } }
+        set
+        {
+            if (_narrationStatus != value)
+            {
+                _narrationStatus = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasNarrationStatus));
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    int colon = value.IndexOf(':');
+                    if (colon > 0 && colon < 30)
+                    {
+                        AssistantResponseHeadline = value[..colon].Trim().ToUpperInvariant();
+                        AssistantResponseText = value[(colon + 1)..].Trim();
+                    }
+                    else
+                    {
+                        AssistantResponseHeadline = (SelectedDestination?.DisplayName ?? "ASSISTANT").ToUpperInvariant();
+                        AssistantResponseText = value;
+                    }
+                }
+            }
+        }
     }
 
     public bool HasNarrationStatus => !string.IsNullOrWhiteSpace(NarrationStatus);
@@ -1279,7 +1302,8 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     /// </remarks>
     private int BeginNewUtterance()
     {
-        State = WidgetState.Processing;
+        bool wasInterrupted = IsSpeakingReview || NarrationActive?.Invoke() == true;
+        State = wasInterrupted ? WidgetState.Interrupted : WidgetState.Processing;
         AgentRunCancelled?.Invoke(this, EventArgs.Empty);
         Interlocked.Increment(ref _spokenReviewGeneration);
         _approvalListener?.Cancel();

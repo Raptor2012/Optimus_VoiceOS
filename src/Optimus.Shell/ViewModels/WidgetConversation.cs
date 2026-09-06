@@ -204,6 +204,26 @@ public sealed partial class WidgetViewModel
             case "comprehensive": NarrationMode = NarrationMode.Comprehensive; break;
             case "toolsOn": NarrateToolsAndSkills = true; break;
             case "toolsOff": NarrateToolsAndSkills = false; break;
+            case "pause": IsPaused = true; break;
+            case "resume": IsPaused = false; break;
+            case "endConversation": EndConversation(); return true;
+            case "openAo": OpenInAo(); return true;
+            case "approveDecision":
+                if (HasPendingDecision)
+                {
+                    ApproveDecision();
+                    _ = SpeakThenResumeAsync("Decision approved.", duringApproval);
+                    return true;
+                }
+                break;
+            case "rejectDecision":
+                if (HasPendingDecision)
+                {
+                    RejectDecision();
+                    _ = SpeakThenResumeAsync("Decision rejected.", duringApproval);
+                    return true;
+                }
+                break;
             case "alias":
                 if (SelectedDestination?.Adapter.BoundWindow is not { } window)
                 { _ = SpeakThenResumeAsync("Choose a window before naming it.", duringApproval); return true; }

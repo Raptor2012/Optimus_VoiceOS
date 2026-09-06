@@ -14,6 +14,19 @@ public class ConversationCommandTests
     [InlineData("remember this as voice project", "alias", "voice project")]
     [InlineData("cleanup off", "cleanupOff", "")]
     [InlineData("short readback", "shortReview", "")]
+    [InlineData("open ao", "openAo", "")]
+    [InlineData("open orchestrator", "openAo", "")]
+    [InlineData("launch ao", "openAo", "")]
+    [InlineData("pause", "pause", "")]
+    [InlineData("pause listening", "pause", "")]
+    [InlineData("resume", "resume", "")]
+    [InlineData("resume listening", "resume", "")]
+    [InlineData("end conversation", "endConversation", "")]
+    [InlineData("end session", "endConversation", "")]
+    [InlineData("approve plan", "approveDecision", "")]
+    [InlineData("approve and start", "approveDecision", "")]
+    [InlineData("request changes", "rejectDecision", "")]
+    [InlineData("reject plan", "rejectDecision", "")]
     public void RecognizesExplicitCommands(string input, string kind, string value)
     {
         var command = ConversationCommand.Parse(input);
