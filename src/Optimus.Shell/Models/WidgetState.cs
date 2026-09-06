@@ -14,5 +14,8 @@ public enum WidgetState
     Redictating,
 
     /// <summary>A continuous session is open and waiting for the next utterance, hands free.</summary>
-    SessionListening
+    SessionListening,
+
+    /// <summary>Playback was interrupted by speech; brief contraction before transition to listening.</summary>
+    Interrupted
 }

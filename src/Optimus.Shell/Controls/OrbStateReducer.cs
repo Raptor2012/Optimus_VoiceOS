@@ -70,6 +70,11 @@ public sealed class OrbStateReducer
         CenterColor: "#30D158", EdgeColor: "#1E8E3A",
         Label: "Sent", MicEligible: true, PlaybackActive: false);
 
+    private static readonly OrbFrame InterruptedBase = new(
+        RadiusScale: 0.82, CoreOpacity: 0.9, HaloOpacity: 0.0, RotationSpeed: 0,
+        CenterColor: "#8C9EFF", EdgeColor: "#5C6BC0",
+        Label: "Interrupted", MicEligible: true, PlaybackActive: false);
+
     private static readonly OrbFrame ErrorBase = new(
         RadiusScale: 1.0, CoreOpacity: 0.8, HaloOpacity: 0.0, RotationSpeed: 0,
         CenterColor: "#FF453A", EdgeColor: "#992822",
@@ -118,6 +123,7 @@ public sealed class OrbStateReducer
             WidgetState.ReadingDraft => InterpretingBase with { Label = "Reading" },
             WidgetState.AwaitingApproval => AwaitingBase,
             WidgetState.Redictating => ListeningBase with { Label = "Redictating" },
+            WidgetState.Interrupted => InterruptedBase,
             WidgetState.Sending => SendingBase,
             WidgetState.Sent => SentBase,
             WidgetState.Error => ErrorBase,
@@ -133,7 +139,7 @@ public sealed class OrbStateReducer
 
         // Apply mic energy expansion during listening
         double energyScale = 1.0;
-        if (state is WidgetState.Listening or WidgetState.SessionListening or WidgetState.Redictating)
+        if (state is WidgetState.Listening or WidgetState.SessionListening or WidgetState.Redictating or WidgetState.Interrupted)
         {
             energyScale = 1.0 + 0.15 * micEnergy;
         }

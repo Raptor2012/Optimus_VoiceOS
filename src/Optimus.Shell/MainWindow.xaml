@@ -125,7 +125,8 @@
                 <Border Grid.Column="2" VerticalAlignment="Center"
                         Background="{StaticResource SurfaceBrush}"
                         CornerRadius="{StaticResource ControlCornerRadius}" Padding="8,4"
-                        Margin="0,0,6,0">
+                        Margin="0,0,6,0"
+                        ToolTip="Locked voice destination · Tap expand to switch">
                     <TextBlock Text="{Binding ShortDestinationLabel}"
                                FontSize="10"
                                Foreground="{StaticResource AccentBrush}"
@@ -217,6 +218,28 @@
                             </Border>
                         </StackPanel>
 
+                        <!-- Assistant response card -->
+                        <Border Visibility="{Binding HasAssistantResponse, Converter={StaticResource BoolToVis}}"
+                                Background="{StaticResource RaisedBrush}" CornerRadius="10"
+                                Padding="12,8" Margin="0,0,0,8">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,4">
+                                    <TextBlock Text="{Binding AssistantResponseHeadline, FallbackValue='ASSISTANT RESPONSE'}"
+                                               FontSize="9" FontWeight="SemiBold"
+                                               Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Left" />
+                                    <Button Content="Clear" Command="{Binding ClearAssistantResponseCommand}"
+                                            HorizontalAlignment="Right" Padding="6,1"
+                                            Background="Transparent" Foreground="{StaticResource SecondaryBrush}"
+                                            BorderThickness="0" FontSize="9" />
+                                </Grid>
+                                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                                    <TextBlock Text="{Binding AssistantResponseText}" FontSize="12"
+                                               Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"
+                                               LineHeight="18" />
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Assistant response / draft review card -->
                         <Border Visibility="{Binding HasDraft, Converter={StaticResource BoolToVis}}"
                                 Background="{StaticResource RaisedBrush}" CornerRadius="10"
@@ -264,11 +287,55 @@
                                    MaxHeight="50" Margin="0,0,0,6"
                                    Visibility="{Binding HasNarrationStatus, Converter={StaticResource BoolToVis}}" />
 
-                        <!-- Pending decision card: confirm panel -->
+                        <!-- Pending decision / approval card -->
+                        <Border Visibility="{Binding HasPendingDecision, Converter={StaticResource BoolToVis}}"
+                                Background="{StaticResource RaisedBrush}"
+                                BorderBrush="{StaticResource AccentBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="12,10" Margin="0,0,0,8">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,4">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                        <TextBlock Text="⚡" FontSize="11" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding DecisionTitle}"
+                                                   FontSize="10" FontWeight="Bold"
+                                                   Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding DecisionSubtitle}"
+                                               FontSize="9" Foreground="{StaticResource SecondaryBrush}"
+                                               HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                </Grid>
+                                <TextBlock Text="{Binding DecisionDescription}"
+                                           FontSize="12" Foreground="{StaticResource TextBrush}"
+                                           TextWrapping="Wrap" LineHeight="18" Margin="0,2,0,8" />
+
+                                <Grid Margin="0,4,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="1" Content="{Binding DecisionSecondaryLabel}"
+                                            Command="{Binding RejectDecisionCommand}"
+                                            Margin="0,0,6,0" Padding="10,4"
+                                            Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextBrush}"
+                                            BorderThickness="0" FontSize="11" />
+                                    <Button Grid.Column="2" Content="{Binding DecisionPrimaryLabel}"
+                                            Command="{Binding ApproveDecisionCommand}"
+                                            Padding="10,4"
+                                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource OnAccentBrush}"
+                                            BorderThickness="0" FontSize="11" FontWeight="SemiBold" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Draft review actions: Cancel, Redictate, Confirm & Send -->
                         <Grid Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}"
                               Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
@@ -282,7 +349,13 @@
                                     Background="{StaticResource RaisedBrush}"
                                     Foreground="{StaticResource TextBrush}"
                                     BorderThickness="0" FontSize="10" />
-                            <Button Grid.Column="2" Content="Confirm &amp; Send"
+                            <Button Grid.Column="2" Content="Redictate"
+                                    Command="{Binding RedictateCommand}"
+                                    Margin="0,0,4,0" Padding="8,3"
+                                    Background="{StaticResource RaisedBrush}"
+                                    Foreground="{StaticResource WarningBrush}"
+                                    BorderThickness="0" FontSize="10" />
+                            <Button Grid.Column="3" Content="Confirm &amp; Send"
                                     Command="{Binding ConfirmCommand}"
                                     Padding="8,3"
                                     Background="{StaticResource AccentBrush}"
@@ -499,6 +572,20 @@
                                 </Button>
                             </Grid>
                         </Border>
+
+                        <!-- Open in AO -->
+                        <Button Command="{Binding OpenInAoCommand}"
+                                HorizontalAlignment="Stretch"
+                                Background="{StaticResource RaisedBrush}"
+                                Margin="0,0,0,8" Padding="10,7"
+                                BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
+                                ToolTip="Open Agent Orchestrator desktop or web dashboard">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock Text="🚀" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="Open in AO" FontSize="11" FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
 
                         <!-- Footer: hotkey hint + phone status -->
                         <StackPanel Margin="0,0,0,4">
