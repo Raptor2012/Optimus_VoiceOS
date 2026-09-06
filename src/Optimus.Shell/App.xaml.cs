@@ -12,6 +12,7 @@ using Optimus.Core.Speech;
 using Optimus.Core.Voice;
 using Optimus.Inference;
 using Optimus.Providers;
+using Optimus.Providers.Ao;
 using Optimus.Shell.Theme;
 using Optimus.Shell.ViewModels;
 
@@ -66,10 +67,34 @@ public partial class App : Application
         _approvalListener = new OneShotApprovalListener(_audioCaptureService);
         _viewModel.AttachApprovalListener(_approvalListener);
 
-        // The three configured Windows targets. Nothing is selected by default; the user picks.
-        _destinations = new DestinationRegistry();
+        // Configure destinations: Windows apps + live AO daemon destinations.
+        var aoClient = new AoClient();
+        var aoBridge = new AoProjectBridge(aoClient);
+        _destinations = new DestinationRegistry(aoClient);
         _viewModel.AttachDestinations(_destinations);
         _viewModel.LoadPreferences(PersonalSettings.DefaultPath);
+
+        // Asynchronously discover and register any active AO projects
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var projects = await aoClient.GetProjectsAsync().ConfigureAwait(false);
+                foreach (var proj in projects)
+                {
+                    var adapter = new AoDestinationAdapter(aoClient, proj.Id, displayName: $"AO: {proj.Name}");
+                    _destinations.Register(adapter);
+                }
+                if (projects.Count > 0)
+                {
+                    Dispatcher.Invoke(() => _viewModel.AttachDestinations(_destinations));
+                }
+            }
+            catch
+            {
+                // Daemon offline or starting
+            }
+        });
 
         // --no-models runs capture only. A manual draft also skips the ~3.8 GB model load,
         // making destination-adapter dogfooding immediate even when the microphone is muted.
@@ -158,9 +183,20 @@ public partial class App : Application
                     {
                         viewModel.SelectedDestination = match;
                     }
+                    else if (destId.StartsWith("ao:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var adapter = _destinations?.Find(destId);
+                        if (adapter != null)
+                        {
+                            var option = new DestinationOption(adapter, adapter.Probe());
+                            viewModel.Destinations.Add(option);
+                            viewModel.SelectedDestination = option;
+                        }
+                    }
                 }),
                 onDraftEdited: text => Dispatcher.Invoke(() =>
-                    viewModel.DraftText = text));
+                    viewModel.DraftText = text),
+                aoBridge: aoBridge);
             _phoneSession.ProcessCapturedAudio = pcm => Dispatcher.Invoke(() => viewModel.ProcessPhoneAudio(pcm));
             _phoneSession.CaptureBeginning = () => Dispatcher.Invoke(viewModel.PhoneCaptureBeginning);
             _phoneSession.CaptureAbandoned = () => Dispatcher.Invoke(viewModel.PhoneCaptureAbandoned);

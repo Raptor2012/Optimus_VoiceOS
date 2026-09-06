@@ -90,6 +90,10 @@ class MainActivity : ComponentActivity() {
         projectsModel = ViewModelProvider(this)[ProjectsViewModel::class.java]
         updatesModel = ViewModelProvider(this)[UpdatesViewModel::class.java]
 
+        talkModel.onProjectsReceived = { liveProjects ->
+            projectsModel.updateFromLive(liveProjects)
+        }
+
         // Wire service callbacks to ViewModel
         VoiceConversationService.onConversationEnded = {
             talkModel.stopCapture()

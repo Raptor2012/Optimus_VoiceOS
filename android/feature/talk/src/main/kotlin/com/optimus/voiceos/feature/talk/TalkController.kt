@@ -36,11 +36,15 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         onFailure = { message -> main.post { update { it.copy(error = message, status = "Playback failed") } } }
     )
 
+    var onProjectsReceived: ((List<com.optimus.voiceos.core.transport.PcProjectItem>) -> Unit)? = null
+
     fun currentState(): TalkUiState = state
 
     fun setHost(host: String) = update { it.copy(host = host) }
 
     fun setPort(port: String) = update { it.copy(port = port.filter(Char::isDigit)) }
+
+    fun requestProjects() = client.requestProjects()
 
     /** The user edits the draft here; this exact text is what gets confirmed. */
     fun setDraft(text: String) {
@@ -190,13 +194,18 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     private fun handle(event: PcEvent) {
         when (event) {
-            is PcEvent.Connected -> update {
-                it.copy(
-                    connected = true,
-                    connectionLabel = "Connected to ${event.address}",
-                    error = ""
-                )
+            is PcEvent.Connected -> {
+                client.requestProjects()
+                update {
+                    it.copy(
+                        connected = true,
+                        connectionLabel = "Connected to ${event.address}",
+                        error = ""
+                    )
+                }
             }
+
+            is PcEvent.Projects -> onProjectsReceived?.invoke(event.projects)
 
             is PcEvent.Disconnected -> {
                 mic.stop()

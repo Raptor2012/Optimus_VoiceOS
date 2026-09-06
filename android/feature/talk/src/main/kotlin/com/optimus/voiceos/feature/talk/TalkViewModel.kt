@@ -58,6 +58,12 @@ class TalkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setNarrateToolsAndSkills(enabled: Boolean) = controller.setNarrateToolsAndSkills(enabled)
 
+    var onProjectsReceived: ((List<com.optimus.voiceos.core.transport.PcProjectItem>) -> Unit)?
+        get() = controller.onProjectsReceived
+        set(value) { controller.onProjectsReceived = value }
+
+    fun requestProjects() = controller.requestProjects()
+
     override fun onCleared() {
         controller.dispose()
         super.onCleared()

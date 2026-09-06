@@ -9,6 +9,7 @@ using System.Linq;
 using Optimus.Core.Phone;
 using Optimus.Inference;
 using Optimus.Providers;
+using Optimus.Providers.Ao;
 using Optimus.Core.Voice;
 
 /// <summary>
@@ -24,6 +25,7 @@ public sealed class PhoneSession : IDisposable
     private readonly PhoneEndpoint _endpoint;
     private readonly VoicePipeline? _pipeline;
     private readonly DestinationRegistry? _destinations;
+    private readonly AoProjectBridge? _aoBridge;
     private readonly Action<string, string, string>? _onDraft;
     private readonly Action<string>? _onStatus;
     private readonly Action? _onCancel;
@@ -65,11 +67,13 @@ public sealed class PhoneSession : IDisposable
         VoiceDestinationResolver? destinationResolver = null,
         Action<string, string, string, string?>? onDraftWithDestination = null,
         Action<string>? onDestinationSelected = null,
-        Action<string>? onDraftEdited = null)
+        Action<string>? onDraftEdited = null,
+        AoProjectBridge? aoBridge = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
         _destinations = destinations;
+        _aoBridge = aoBridge;
         _onDraft = onDraft;
         _onStatus = onStatus;
         _onCancel = onCancel;
@@ -85,6 +89,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CaptureStopped += OnCaptureStopped;
         _endpoint.AudioReceived += OnAudioReceived;
         _endpoint.DestinationsRequested += OnDestinationsRequested;
+        _endpoint.ProjectsRequested += OnProjectsRequested;
         _endpoint.ConfirmRequested += OnConfirmRequested;
         _endpoint.CancelRequested += OnCancelRequested;
         _endpoint.DestinationSelected += OnDestinationSelected;
@@ -112,6 +117,30 @@ public sealed class PhoneSession : IDisposable
     }
 
     private void OnDestinationsRequested(object? sender, EventArgs e) => PushDestinations();
+
+    private void OnProjectsRequested(object? sender, EventArgs e) => _ = PushProjectsAsync();
+
+    /// <summary>Pushes the live AO projects and sessions to the phone.</summary>
+    public async Task PushProjectsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_aoBridge == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var cards = await _aoBridge.GetLiveProjectCardsAsync(cancellationToken).ConfigureAwait(false);
+            if (cards.Count > 0)
+            {
+                _endpoint.SendProjects(cards);
+            }
+        }
+        catch
+        {
+            // Daemon might not be running or reachable
+        }
+    }
 
     /// <summary>Sends the destination list with live readiness, so the phone shows the truth.</summary>
     public void PushDestinations()
@@ -268,6 +297,7 @@ public sealed class PhoneSession : IDisposable
         {
             _endpoint.SendStatus("idle", "Connected to PC");
             PushDestinations();
+            _ = PushProjectsAsync();
         }
         else
         {
@@ -446,6 +476,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CaptureStopped -= OnCaptureStopped;
         _endpoint.AudioReceived -= OnAudioReceived;
         _endpoint.DestinationsRequested -= OnDestinationsRequested;
+        _endpoint.ProjectsRequested -= OnProjectsRequested;
         _endpoint.ConfirmRequested -= OnConfirmRequested;
         _endpoint.CancelRequested -= OnCancelRequested;
         _endpoint.DestinationSelected -= OnDestinationSelected;
