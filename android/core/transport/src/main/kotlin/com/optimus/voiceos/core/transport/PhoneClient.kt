@@ -83,7 +83,6 @@ sealed interface PcEvent {
     data object StopApprovalCapture : PcEvent
     data object StartRedictationCapture : PcEvent
     data class DestinationSelected(val destinationId: String) : PcEvent
-    data class Projects(val json: String) : PcEvent
     data class AgentUpdate(val text: String, val destinationId: String) : PcEvent
 }
 
@@ -293,7 +292,6 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                     onEvent(PcEvent.Projects(list))
                 }
                 "destinationSelected" -> onEvent(PcEvent.DestinationSelected(o.optString("destinationId")))
-                "projects" -> onEvent(PcEvent.Projects(json))
                 "agentUpdate" -> onEvent(PcEvent.AgentUpdate(o.optString("text"), o.optString("destinationId")))
                 else -> Unit
             }
@@ -339,8 +337,6 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
             .put("mode", mode)
             .put("narrateToolsAndSkills", narrateToolsAndSkills)
     )
-
-    fun requestProjects() = sendJson(JSONObject().put("t", "requestProjects"))
 
     fun resolveApproval(sessionId: String, requestId: String, decisionId: String, feedback: String? = null) {
         val obj = JSONObject().put("t", "resolveApproval")

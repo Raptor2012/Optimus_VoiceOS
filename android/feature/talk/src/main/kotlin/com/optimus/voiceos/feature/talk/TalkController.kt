@@ -258,7 +258,6 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             is PcEvent.StopApprovalCapture -> stopApprovalCapture()
             is PcEvent.StartRedictationCapture -> startRedictationCapture()
             is PcEvent.DestinationSelected -> update { it.copy(selectedDestinationId = event.destinationId) }
-            is PcEvent.Projects -> Unit
             is PcEvent.AgentUpdate -> update { it.copy(status = event.text) }
         }
     }
