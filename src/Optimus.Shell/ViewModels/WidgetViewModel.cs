@@ -242,6 +242,7 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(HasSelectedDestination));
                 UpdateWindowChoices();
                 SelectedDestinationChanged?.Invoke(this, value);
+                NotifyCapsuleProperties();
                 SavePreferences();
 
                 // If destination changed during review or approval, reset to Confirm and reread

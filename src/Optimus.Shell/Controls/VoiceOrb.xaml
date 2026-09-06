@@ -1,0 +1,53 @@
+<UserControl x:Class="Optimus.Shell.Controls.VoiceOrb"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="48" Height="48">
+    <Grid>
+        <!-- Outer halo ring, visible during awaiting-confirmation -->
+        <Ellipse x:Name="HaloRing"
+                 Width="48" Height="48"
+                 Opacity="0"
+                 StrokeThickness="2"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center">
+            <Ellipse.Stroke>
+                <SolidColorBrush x:Name="HaloStroke" Color="#8C9EFF" />
+            </Ellipse.Stroke>
+            <Ellipse.Fill>
+                <SolidColorBrush Color="Transparent" />
+            </Ellipse.Fill>
+        </Ellipse>
+
+        <!-- Core orb with radial gradient -->
+        <Ellipse x:Name="OrbCore"
+                 Width="36" Height="36"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center">
+            <Ellipse.Fill>
+                <RadialGradientBrush x:Name="OrbGradient"
+                                     GradientOrigin="0.35,0.35"
+                                     Center="0.4,0.4"
+                                     RadiusX="0.6"
+                                     RadiusY="0.6">
+                    <GradientStop x:Name="GradCenter" Color="#8C9EFF" Offset="0.0" />
+                    <GradientStop x:Name="GradEdge" Color="#3D4A6B" Offset="1.0" />
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform x:Name="OrbScale" ScaleX="1" ScaleY="1" />
+                    <RotateTransform x:Name="OrbRotation" Angle="0" />
+                </TransformGroup>
+            </Ellipse.RenderTransform>
+            <Ellipse.RenderTransformOrigin>0.5,0.5</Ellipse.RenderTransformOrigin>
+        </Ellipse>
+
+        <!-- Mic-off indicator overlay -->
+        <TextBlock x:Name="MicOffIndicator"
+                   Text="🔇"
+                   FontSize="14"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Visibility="Collapsed" />
+    </Grid>
+</UserControl>

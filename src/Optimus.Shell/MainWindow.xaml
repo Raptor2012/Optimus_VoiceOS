@@ -4,27 +4,37 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:Optimus.Shell.ViewModels"
+        xmlns:ctrl="clr-namespace:Optimus.Shell.Controls"
         xmlns:core="clr-namespace:Optimus.Core.Narration;assembly=Optimus.Core"
         mc:Ignorable="d"
         Title="Optimus Voice OS"
         FontFamily="Segoe UI"
-        MinHeight="150"
-        SizeToContent="Height"
-        Width="420"
+        SizeToContent="WidthAndHeight"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
         Topmost="True"
         ResizeMode="NoResize"
-        ShowInTaskbar="True"
+        ShowInTaskbar="False"
         WindowStartupLocation="Manual"
         MouseDown="OnWindowMouseDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <vm:InverseBooleanConverter x:Key="InverseBool" />
+
+        <!-- Design tokens -->
+        <SolidColorBrush x:Key="BgBrush" Color="#101114" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#181A1F" />
+        <SolidColorBrush x:Key="RaisedBrush" Color="#20232A" />
+        <SolidColorBrush x:Key="TextBrush" Color="#F1F2F4" />
+        <SolidColorBrush x:Key="SecondaryBrush" Color="#A3A9B5" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#8C9EFF" />
+
+        <!-- Capsule button style -->
         <Style TargetType="Button">
             <Setter Property="MinHeight" Value="28" />
             <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -39,385 +49,471 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Capsule toggle button style (for mic/mute toggles) -->
+        <Style x:Key="CapsuleToggle" TargetType="Button">
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="MinWidth" Value="32" />
+            <Setter Property="Padding" Value="6" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="16" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Opacity" Value="0.85" /></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
-    <Border Margin="10"
-            CornerRadius="14"
-            Background="#0B111B"
-            BorderBrush="#34465C"
+    <Border Margin="8"
+            CornerRadius="32"
+            Background="{StaticResource BgBrush}"
+            BorderBrush="#2A2D36"
             BorderThickness="1">
         <Border.Effect>
-            <DropShadowEffect BlurRadius="16"
-                              ShadowDepth="3"
-                              Opacity="0.5"
+            <DropShadowEffect BlurRadius="20"
+                              ShadowDepth="4"
+                              Opacity="0.45"
                               Color="#000000" />
         </Border.Effect>
 
-        <Grid Margin="18,16,18,14">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-
-            <!-- Header: Status indicator dot, App title, State badge, Close button -->
-            <Grid Grid.Row="0">
+        <StackPanel>
+            <!-- ══════════════════════════════════════════════════════════
+                 COLLAPSED CAPSULE: Orb + State label + Destination + Mic toggle + Expand
+                 ~280x64px
+                 ══════════════════════════════════════════════════════════ -->
+            <Grid MinWidth="280" Height="64" Margin="8,8,8,0">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />  <!-- Orb -->
+                    <ColumnDefinition Width="Auto" />  <!-- State label -->
+                    <ColumnDefinition Width="*" />      <!-- Destination -->
+                    <ColumnDefinition Width="Auto" />  <!-- Mic toggle -->
+                    <ColumnDefinition Width="Auto" />  <!-- Expand toggle -->
                 </Grid.ColumnDefinitions>
 
-                <!-- Indicator Dot -->
-                <Ellipse Grid.Column="0"
-                         Width="10"
-                         Height="10"
-                         Margin="0,0,8,0"
-                         VerticalAlignment="Center">
-                    <Ellipse.Fill>
-                        <SolidColorBrush Color="{Binding StatusBadgeColor, FallbackValue='#30D158'}" />
-                    </Ellipse.Fill>
-                </Ellipse>
+                <!-- Animated orb -->
+                <ctrl:VoiceOrb x:Name="Orb" Grid.Column="0"
+                               WidgetState="{Binding State}"
+                               MicEnergy="{Binding MicEnergy}"
+                               PlaybackEnergy="{Binding PlaybackEnergy}"
+                               IsSpeakingReview="{Binding IsSpeakingReview}"
+                               IsSessionOpen="{Binding IsSessionOpen}"
+                               IsPaused="{Binding IsPaused}"
+                               IsMuted="{Binding IsSpeechMuted}"
+                               VerticalAlignment="Center"
+                               Margin="4,0,8,0" />
 
-                <!-- App Title -->
-                <TextBlock Grid.Column="1"
-                           Text="OPTIMUS"
-                           FontWeight="SemiBold"
-                           FontSize="14"
-                           Foreground="#EAF2FA"
-                           VerticalAlignment="Center" />
+                <!-- State label -->
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <TextBlock Text="{Binding OrbLabel, ElementName=Orb}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}" />
+                    <TextBlock Text="{Binding StatusLine}"
+                               FontSize="10"
+                               Foreground="{StaticResource SecondaryBrush}"
+                               MaxWidth="120"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
 
-                <!-- State Badge -->
-                <Border Grid.Column="2"
-                        Margin="0,0,10,0"
-                        CornerRadius="4"
-                        Background="#1A293C"
-                        Padding="6,2">
-                    <TextBlock Text="{Binding State}"
-                               FontSize="11"
-                               FontWeight="Medium"
-                               Foreground="#7DD3FC" />
+                <!-- Locked destination display -->
+                <Border Grid.Column="2" VerticalAlignment="Center"
+                        Background="{StaticResource SurfaceBrush}"
+                        CornerRadius="12" Padding="8,4"
+                        Margin="0,0,6,0">
+                    <TextBlock Text="{Binding ShortDestinationLabel}"
+                               FontSize="10"
+                               Foreground="{StaticResource AccentBrush}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="100" />
                 </Border>
 
-                <!-- Close / Hide Button -->
-                <Button Grid.Column="3"
-                        Content="✕"
-                        Width="18"
-                        Height="18"
-                        MinHeight="18"
-                        Padding="0"
-                        Background="Transparent"
-                        Foreground="#8E8E93"
-                        BorderThickness="0"
-                        Cursor="Hand"
-                        Click="OnCloseClick"
-                        FontSize="10"
-                        ToolTip="Close widget" />
+                <!-- Microphone toggle -->
+                <Button Grid.Column="3" Style="{StaticResource CapsuleToggle}"
+                        Background="{StaticResource RaisedBrush}"
+                        Command="{Binding TogglePauseCommand}"
+                        VerticalAlignment="Center"
+                        ToolTip="Pause / resume listening"
+                        Margin="0,0,4,0">
+                    <TextBlock FontSize="14" Foreground="{StaticResource TextBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="🎙" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                        <Setter Property="Text" Value="🔇" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
+
+                <!-- Expand/collapse toggle -->
+                <Button Grid.Column="4" Style="{StaticResource CapsuleToggle}"
+                        Background="{StaticResource RaisedBrush}"
+                        Command="{Binding ToggleExpandedCommand}"
+                        VerticalAlignment="Center"
+                        ToolTip="Expand / collapse"
+                        Margin="0,0,4,0">
+                    <TextBlock FontSize="12" Foreground="{StaticResource SecondaryBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="▼" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsExpanded}" Value="True">
+                                        <Setter Property="Text" Value="▲" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Button>
             </Grid>
 
-            <!-- Main Content Area -->
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="0,8,0,4" VerticalAlignment="Center">
-                <!-- Status text -->
-                <TextBlock Text="{Binding StatusLine}"
-                           FontSize="13"
-                           Foreground="#FFFFFF"
-                           TextWrapping="Wrap"
-                           MaxHeight="40"
-                           TextTrimming="CharacterEllipsis" />
-
-                <!-- Says plainly whether the microphone is open without a key held. -->
-                <Border Background="#1B2E1F" CornerRadius="8" Padding="9,5" Margin="0,8,0,0"
-                        HorizontalAlignment="Left"
-                        Visibility="{Binding IsSessionOpen, Converter={StaticResource BoolToVis}}">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,7,0">
-                            <Ellipse.Fill>
-                                <SolidColorBrush Color="{Binding SessionBadgeColor, FallbackValue='#30D158'}" />
-                            </Ellipse.Fill>
-                        </Ellipse>
-                        <TextBlock Text="{Binding SessionBadgeText}" FontSize="10"
-                                   Foreground="#8FE3A6" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Border>
-
-                <Border Background="#111C2B" CornerRadius="10" Padding="12,10" Margin="0,12,0,0">
+            <!-- ══════════════════════════════════════════════════════════
+                 EXPANDED PANEL: ~400px wide, content-driven height
+                 ══════════════════════════════════════════════════════════ -->
+            <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVis}}"
+                    Width="400"
+                    Margin="0,4,0,0"
+                    Background="{StaticResource SurfaceBrush}"
+                    CornerRadius="0,0,24,24"
+                    Padding="16,8,16,12">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              MaxHeight="480">
                     <StackPanel>
-                        <TextBlock Text="DESTINATION" Foreground="#A7B8CD" FontSize="10" Margin="0,0,0,5" />
-                        <TextBlock Text="{Binding DestinationName}" Foreground="#7DD3FC" FontSize="13" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-                <Border Background="#111C2B" CornerRadius="10" Padding="12" Margin="0,8,0,0"
-                        Visibility="{Binding HasDraft, Converter={StaticResource BoolToVis}}">
-                    <StackPanel>
-                        <TextBlock Text="YOUR PROMPT" Foreground="#A7B8CD" FontSize="10" Margin="0,0,0,6" />
-                        <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
-                            <TextBlock Text="{Binding DraftText}" Foreground="#EAF2FA" FontSize="14" TextWrapping="Wrap" LineHeight="21" />
-                        </ScrollViewer>
-                    </StackPanel>
-                </Border>
-                <TextBlock Text="Say send · redictate · cancel" Foreground="#7DD3FC" FontSize="12" Margin="0,10,0,0"
-                           Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}" />
-                <TextBlock Text="{Binding ErrorMessage}" Foreground="#FF9C95" TextWrapping="Wrap" Margin="0,5,0,0"
-                           Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}" />
-                <TextBlock Text="{Binding NarrationStatus}" Foreground="#A7B8CD" TextWrapping="Wrap" MaxHeight="65" Margin="0,5,0,0" />
-                <Expander Header="Details &amp; controls" IsExpanded="{Binding ShowDetails}" Foreground="#AAAAAA" Margin="0,8,0,0">
-                <StackPanel>
-                <CheckBox Content="Clean up dictation" IsChecked="{Binding CleanupEnabled}" Foreground="#EEEEF5" />
-                <CheckBox Content="Short review (destination only)" IsChecked="{Binding ShortReview}" Foreground="#EEEEF5" />
-                <!-- Raw transcript, exactly as the speech model produced it -->
-                <StackPanel Visibility="{Binding HasRawTranscript, Converter={StaticResource BoolToVis}}"
-                            Margin="0,8,0,0">
-                    <TextBlock Text="RAW TRANSCRIPT"
-                               FontSize="9"
-                               FontWeight="SemiBold"
-                               Foreground="#636366"
-                               Margin="0,0,0,2" />
-                    <Border Background="#16161B"
-                            CornerRadius="6"
-                            Padding="8,5">
-                        <TextBlock Text="{Binding RawTranscript}"
-                                   FontSize="11"
-                                   Foreground="#8E8E93"
-                                   TextWrapping="Wrap"
-                                   MaxHeight="70" />
-                    </Border>
-                </StackPanel>
 
-                <!-- Cleaned draft, editable before confirmation -->
-                <StackPanel Visibility="{Binding IsDraftVisible, Converter={StaticResource BoolToVis}}"
-                            Margin="0,8,0,0">
-                    <TextBlock Text="PROMPT (editable)"
-                               FontSize="9"
-                               FontWeight="SemiBold"
-                               Foreground="#636366"
-                               Margin="0,0,0,2" />
-                    <TextBox Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}"
-                             FontSize="13"
-                             Foreground="#FFFFFF"
-                             Background="#2C2C34"
-                             BorderBrush="#0A84FF"
-                             BorderThickness="1"
-                             Padding="8,5"
-                             MinHeight="46"
-                             MaxHeight="120"
-                             TextWrapping="Wrap"
-                             AcceptsReturn="True"
-                             VerticalScrollBarVisibility="Auto"
-                             CaretBrush="#FFFFFF"
-                             IsReadOnly="{Binding IsDraftEditable, Converter={StaticResource InverseBool}}" />
-                </StackPanel>
+                        <!-- Session badge -->
+                        <Border Background="#1B2E1F" CornerRadius="8" Padding="9,5"
+                                HorizontalAlignment="Left" Margin="0,0,0,8"
+                                Visibility="{Binding IsSessionOpen, Converter={StaticResource BoolToVis}}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,7,0">
+                                    <Ellipse.Fill>
+                                        <SolidColorBrush Color="{Binding SessionBadgeColor, FallbackValue='#30D158'}" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                                <TextBlock Text="{Binding SessionBadgeText}" FontSize="10"
+                                           Foreground="#8FE3A6" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
 
-                <!-- Per-stage latency -->
-                <TextBlock Visibility="{Binding HasStageTimings, Converter={StaticResource BoolToVis}}"
-                           Text="{Binding StageTimings}"
-                           FontSize="10"
-                           FontFamily="Consolas"
-                           Foreground="#5E9EFF"
-                           Margin="0,6,0,0"
-                           TextWrapping="Wrap" />
+                        <!-- Recent transcript (raw) -->
+                        <StackPanel Visibility="{Binding HasRawTranscript, Converter={StaticResource BoolToVis}}"
+                                    Margin="0,0,0,8">
+                            <TextBlock Text="TRANSCRIPT" FontSize="9" FontWeight="SemiBold"
+                                       Foreground="{StaticResource SecondaryBrush}" Margin="0,0,0,3" />
+                            <Border Background="{StaticResource RaisedBrush}" CornerRadius="8" Padding="10,6">
+                                <TextBlock Text="{Binding RawTranscript}" FontSize="11"
+                                           Foreground="#8E8E93" TextWrapping="Wrap" MaxHeight="60" />
+                            </Border>
+                        </StackPanel>
 
-                <!-- Spoken review: reading indicator and measured speech latency -->
-                <StackPanel Visibility="{Binding HasSpeechStatus, Converter={StaticResource BoolToVis}}"
-                            Orientation="Horizontal"
-                            Margin="0,4,0,0">
-                    <TextBlock Text="🔊"
-                               FontSize="10"
-                               Margin="0,0,5,0"
-                               VerticalAlignment="Center"
-                               Visibility="{Binding IsSpeakingReview, Converter={StaticResource BoolToVis}}" />
-                    <TextBlock Text="{Binding SpeechStatus}"
-                               FontSize="10"
-                               FontFamily="Consolas"
-                               Foreground="#A78BFA"
-                               TextWrapping="Wrap"
-                               MaxWidth="360" />
-                </StackPanel>
+                        <!-- Assistant response / draft review card -->
+                        <Border Visibility="{Binding HasDraft, Converter={StaticResource BoolToVis}}"
+                                Background="{StaticResource RaisedBrush}" CornerRadius="10"
+                                Padding="12,8" Margin="0,0,0,8">
+                            <StackPanel>
+                                <TextBlock Text="YOUR PROMPT" FontSize="9" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryBrush}" Margin="0,0,0,4" />
+                                <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                                    <TextBlock Text="{Binding DraftText}" FontSize="13"
+                                               Foreground="{StaticResource TextBrush}" TextWrapping="Wrap"
+                                               LineHeight="20" />
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
 
-                <!-- Error panel if error state -->
-                <Border Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}"
-                        Margin="0,4,0,0"
-                        Background="#3A1E1E"
-                        BorderBrush="#FF453A"
-                        BorderThickness="1"
-                        CornerRadius="6"
-                        Padding="8,4">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0"
-                                   Text="{Binding ErrorMessage}"
-                                   Foreground="#FF453A"
-                                   FontSize="11"
-                                   TextWrapping="Wrap"
-                                   VerticalAlignment="Center" />
-                        <Button Grid.Column="1"
-                                Content="Dismiss"
-                                Command="{Binding DismissErrorCommand}"
-                                Margin="6,0,0,0"
-                                Padding="6,2"
-                                Background="#FF453A"
-                                Foreground="#FFFFFF"
-                                BorderThickness="0"
-                                FontSize="10"
-                                Cursor="Hand" />
-                    </Grid>
-                </Border>
+                        <!-- Confirmation instructions -->
+                        <TextBlock Text="Say send · redictate · cancel" FontSize="12"
+                                   Foreground="{StaticResource AccentBrush}" Margin="0,0,0,6"
+                                   Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}" />
 
-                <!-- Destination picker: always visible, always manual -->
-                <StackPanel Margin="0,10,0,0">
-                    <Grid Margin="0,0,0,3">
-                        <TextBlock Text="DESTINATION"
-                                   FontSize="9"
-                                   FontWeight="SemiBold"
-                                   Foreground="#636366"
-                                   HorizontalAlignment="Left" />
-                        <Button Content="Refresh"
-                                Command="{Binding RefreshDestinationsCommand}"
-                                HorizontalAlignment="Right"
-                                Padding="6,1"
-                                Background="#2C2C34"
-                                Foreground="#8E8E93"
-                                BorderThickness="0"
-                                FontSize="9"
-                                Cursor="Hand" />
-                    </Grid>
+                        <!-- Error message -->
+                        <Border Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}"
+                                Margin="0,0,0,8" Background="#3A1E1E"
+                                BorderBrush="#FF453A" BorderThickness="1"
+                                CornerRadius="8" Padding="10,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding ErrorMessage}"
+                                           Foreground="#FF453A" FontSize="11" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Dismiss"
+                                        Command="{Binding DismissErrorCommand}"
+                                        Margin="8,0,0,0" Padding="6,2"
+                                        Background="#FF453A" Foreground="#FFFFFF"
+                                        BorderThickness="0" FontSize="10" />
+                            </Grid>
+                        </Border>
 
-                    <ListBox ItemsSource="{Binding Destinations}"
-                             SelectedItem="{Binding SelectedDestination}"
-                             Background="#16161B"
-                             BorderBrush="#383842"
-                             BorderThickness="1"
-                             Foreground="#E5E5EA">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal" Margin="0,1">
-                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
-                                        <Ellipse.Fill>
-                                            <SolidColorBrush Color="{Binding StatusColor}" />
-                                        </Ellipse.Fill>
-                                    </Ellipse>
-                                    <TextBlock Text="{Binding DisplayName}"
-                                               FontSize="11"
-                                               FontWeight="SemiBold"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Text="{Binding StatusDetail}"
-                                               Foreground="#8E8E93"
-                                               FontSize="9"
-                                               Margin="6,0,0,0"
-                                               VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="220" />
+                        <!-- Narration status -->
+                        <TextBlock Text="{Binding NarrationStatus}" FontSize="10"
+                                   Foreground="{StaticResource SecondaryBrush}" TextWrapping="Wrap"
+                                   MaxHeight="50" Margin="0,0,0,6"
+                                   Visibility="{Binding HasNarrationStatus, Converter={StaticResource BoolToVis}}" />
+
+                        <!-- Pending decision card: confirm panel -->
+                        <Grid Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}"
+                              Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding DestinationName, StringFormat='→ {0}'}"
+                                       Foreground="{StaticResource AccentBrush}" FontSize="11"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <Button Grid.Column="1" Content="Cancel"
+                                    Command="{Binding CancelCommand}"
+                                    Margin="4,0" Padding="8,3"
+                                    Background="{StaticResource RaisedBrush}"
+                                    Foreground="{StaticResource TextBrush}"
+                                    BorderThickness="0" FontSize="10" />
+                            <Button Grid.Column="2" Content="Confirm &amp; Send"
+                                    Command="{Binding ConfirmCommand}"
+                                    Padding="8,3"
+                                    Background="{StaticResource AccentBrush}"
+                                    Foreground="#101114"
+                                    BorderThickness="0" FontSize="10" FontWeight="SemiBold" />
+                        </Grid>
+
+                        <!-- Destination switcher -->
+                        <StackPanel Margin="0,0,0,8">
+                            <Grid Margin="0,0,0,3">
+                                <TextBlock Text="DESTINATION" FontSize="9" FontWeight="SemiBold"
+                                           Foreground="{StaticResource SecondaryBrush}" HorizontalAlignment="Left" />
+                                <Button Content="Refresh" Command="{Binding RefreshDestinationsCommand}"
+                                        HorizontalAlignment="Right" Padding="6,1"
+                                        Background="{StaticResource RaisedBrush}"
+                                        Foreground="{StaticResource SecondaryBrush}"
+                                        BorderThickness="0" FontSize="9" />
+                            </Grid>
+                            <ListBox ItemsSource="{Binding Destinations}"
+                                     SelectedItem="{Binding SelectedDestination}"
+                                     Background="{StaticResource RaisedBrush}"
+                                     BorderBrush="#2A2D36" BorderThickness="1"
+                                     Foreground="{StaticResource TextBrush}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Margin="0,1">
+                                            <Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                <Ellipse.Fill>
+                                                    <SolidColorBrush Color="{Binding StatusColor}" />
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                            <TextBlock Text="{Binding DisplayName}" FontSize="11"
+                                                       FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding StatusDetail}" Foreground="#8E8E93"
+                                                       FontSize="9" Margin="6,0,0,0"
+                                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                       MaxWidth="200" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <!-- Window binding (conditional) -->
+                            <StackPanel Visibility="{Binding NeedsWindowChoice, Converter={StaticResource BoolToVis}}"
+                                        Margin="0,6,0,0">
+                                <TextBlock Text="PICK THE EXACT WINDOW" FontSize="9" FontWeight="SemiBold"
+                                           Foreground="#FF9500" Margin="0,0,0,2" />
+                                <ListBox ItemsSource="{Binding WindowChoices}"
+                                         SelectedItem="{Binding SelectedWindowChoice}"
+                                         Background="{StaticResource RaisedBrush}"
+                                         Foreground="{StaticResource TextBrush}"
+                                         BorderBrush="#FF9500" BorderThickness="1"
+                                         MaxHeight="80" FontSize="10">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding DisplayLabel}" TextTrimming="CharacterEllipsis" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <Button Content="Bind to this window"
+                                        Command="{Binding BindWindowCommand}"
+                                        HorizontalAlignment="Left" Margin="0,4,0,0" Padding="8,2"
+                                        Background="#FF9500" Foreground="#101114"
+                                        BorderThickness="0" FontSize="10" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Expanded details (cleanup, draft editing, latencies, narration) -->
+                        <Expander Header="Details &amp; controls" IsExpanded="{Binding ShowDetails}"
+                                  Foreground="{StaticResource SecondaryBrush}" Margin="0,0,0,8">
+                            <StackPanel Margin="0,4,0,0">
+                                <CheckBox Content="Clean up dictation" IsChecked="{Binding CleanupEnabled}"
+                                          Foreground="{StaticResource TextBrush}" />
+                                <CheckBox Content="Short review (destination only)" IsChecked="{Binding ShortReview}"
+                                          Foreground="{StaticResource TextBrush}" />
+
+                                <!-- Editable draft -->
+                                <StackPanel Visibility="{Binding IsDraftVisible, Converter={StaticResource BoolToVis}}"
+                                            Margin="0,8,0,0">
+                                    <TextBlock Text="PROMPT (editable)" FontSize="9" FontWeight="SemiBold"
+                                               Foreground="{StaticResource SecondaryBrush}" Margin="0,0,0,2" />
+                                    <TextBox Text="{Binding DraftText, UpdateSourceTrigger=PropertyChanged}"
+                                             FontSize="13" Foreground="{StaticResource TextBrush}"
+                                             Background="{StaticResource RaisedBrush}"
+                                             BorderBrush="{StaticResource AccentBrush}"
+                                             BorderThickness="1" Padding="8,5"
+                                             MinHeight="46" MaxHeight="120"
+                                             TextWrapping="Wrap" AcceptsReturn="True"
+                                             VerticalScrollBarVisibility="Auto"
+                                             CaretBrush="{StaticResource TextBrush}"
+                                             IsReadOnly="{Binding IsDraftEditable, Converter={StaticResource InverseBool}}" />
                                 </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
 
-                    <!-- Window binding: shown only when a choice is actually required -->
-                    <StackPanel Visibility="{Binding NeedsWindowChoice, Converter={StaticResource BoolToVis}}"
-                                Margin="0,6,0,0">
-                        <TextBlock Text="PICK THE EXACT WINDOW"
-                                   FontSize="9"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FF9500"
-                                   Margin="0,0,0,2" />
-                        <ListBox ItemsSource="{Binding WindowChoices}"
-                                 SelectedItem="{Binding SelectedWindowChoice}"
-                                 Background="#16161B"
-                                 Foreground="#E5E5EA"
-                                 BorderBrush="#FF9500"
-                                 BorderThickness="1"
-                                 MaxHeight="80"
-                                 FontSize="10">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding DisplayLabel}" TextTrimming="CharacterEllipsis" />
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                        <Button Content="Bind to this window"
-                                Command="{Binding BindWindowCommand}"
-                                HorizontalAlignment="Left"
-                                Margin="0,4,0,0"
-                                Padding="8,2"
-                                Background="#FF9500"
-                                Foreground="#1E1E24"
-                                BorderThickness="0"
-                                FontSize="10"
-                                Cursor="Hand" />
+                                <!-- Stage timings -->
+                                <TextBlock Visibility="{Binding HasStageTimings, Converter={StaticResource BoolToVis}}"
+                                           Text="{Binding StageTimings}" FontSize="10"
+                                           FontFamily="Consolas" Foreground="{StaticResource AccentBrush}"
+                                           Margin="0,6,0,0" TextWrapping="Wrap" />
+
+                                <!-- Speech status -->
+                                <StackPanel Visibility="{Binding HasSpeechStatus, Converter={StaticResource BoolToVis}}"
+                                            Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock Text="🔊" FontSize="10" Margin="0,0,5,0" VerticalAlignment="Center"
+                                               Visibility="{Binding IsSpeakingReview, Converter={StaticResource BoolToVis}}" />
+                                    <TextBlock Text="{Binding SpeechStatus}" FontSize="10"
+                                               FontFamily="Consolas" Foreground="#A78BFA"
+                                               TextWrapping="Wrap" MaxWidth="340" />
+                                </StackPanel>
+
+                                <!-- Agent narration controls -->
+                                <StackPanel Margin="0,8,0,0">
+                                    <TextBlock Text="AGENT NARRATION" FontSize="9" FontWeight="SemiBold"
+                                               Foreground="{StaticResource SecondaryBrush}" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                        <ComboBox SelectedValue="{Binding NarrationMode}"
+                                                  SelectedValuePath="Tag" Width="130">
+                                            <ComboBoxItem Content="Concise" Tag="{x:Static core:NarrationMode.Concise}" />
+                                            <ComboBoxItem Content="Comprehensive" Tag="{x:Static core:NarrationMode.Comprehensive}" />
+                                        </ComboBox>
+                                        <CheckBox Content="Narrate tools &amp; skills"
+                                                  IsChecked="{Binding NarrateToolsAndSkills}"
+                                                  Foreground="{StaticResource TextBrush}"
+                                                  Margin="10,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- ─── Controls row: Pause · Mute · End ─── -->
+                        <Border Background="{StaticResource RaisedBrush}" CornerRadius="10"
+                                Padding="10,8" Margin="0,0,0,8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Pause listening -->
+                                <Button Grid.Column="0" Command="{Binding TogglePauseCommand}"
+                                        Background="Transparent" Padding="4,4" BorderThickness="0">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <TextBlock HorizontalAlignment="Center" FontSize="16"
+                                                   Foreground="{StaticResource TextBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="⏸" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                            <Setter Property="Text" Value="▶" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="9" Foreground="{StaticResource SecondaryBrush}"
+                                                   HorizontalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Pause" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                            <Setter Property="Text" Value="Resume" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Button>
+
+                                <!-- Mute speech -->
+                                <Button Grid.Column="1" Command="{Binding ToggleMuteCommand}"
+                                        Background="Transparent" Padding="4,4" BorderThickness="0">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <TextBlock HorizontalAlignment="Center" FontSize="16"
+                                                   Foreground="{StaticResource TextBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="🔊" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSpeechMuted}" Value="True">
+                                                            <Setter Property="Text" Value="🔇" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock FontSize="9" Foreground="{StaticResource SecondaryBrush}"
+                                                   HorizontalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="Mute" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSpeechMuted}" Value="True">
+                                                            <Setter Property="Text" Value="Unmute" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Button>
+
+                                <!-- End conversation -->
+                                <Button Grid.Column="2" Command="{Binding EndConversationCommand}"
+                                        Background="Transparent" Padding="4,4" BorderThickness="0">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <TextBlock Text="⏹" FontSize="16" HorizontalAlignment="Center"
+                                                   Foreground="#FF453A" />
+                                        <TextBlock Text="End" FontSize="9" HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource SecondaryBrush}" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <!-- Footer: hotkey hint + phone status -->
+                        <StackPanel Margin="0,0,0,4">
+                            <TextBlock FontSize="9" Foreground="{StaticResource SecondaryBrush}"
+                                       Text="{Binding HotkeyLabel, StringFormat='Push-to-talk: {0} (hold to capture)'}" />
+                            <TextBlock Visibility="{Binding ShowDetails, Converter={StaticResource BoolToVis}}"
+                                       Text="{Binding PhoneStatus}" FontSize="9"
+                                       FontFamily="Consolas" Foreground="#6B7280"
+                                       Margin="0,3,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+
                     </StackPanel>
-                </StackPanel>
-
-                <StackPanel Margin="0,8,0,0">
-                    <TextBlock Text="AGENT NARRATION" FontSize="9" FontWeight="SemiBold" Foreground="#636366" />
-                    <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                        <ComboBox SelectedValue="{Binding NarrationMode}" SelectedValuePath="Tag" Width="130">
-                            <ComboBoxItem Content="Concise" Tag="{x:Static core:NarrationMode.Concise}" />
-                            <ComboBoxItem Content="Comprehensive" Tag="{x:Static core:NarrationMode.Comprehensive}" />
-                        </ComboBox>
-                        <CheckBox Content="Narrate tools &amp; skills" IsChecked="{Binding NarrateToolsAndSkills}"
-                                  Foreground="#E5E5EA" Margin="10,0,0,0" VerticalAlignment="Center" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding NarrationStatus}" FontSize="10" Foreground="#A78BFA"
-                               TextWrapping="Wrap" Margin="0,3,0,0"
-                               Visibility="{Binding HasNarrationStatus, Converter={StaticResource BoolToVis}}" />
-                </StackPanel>
-
-                <!-- Confirm panel if confirm state -->
-                <Grid Visibility="{Binding IsConfirmPanelVisible, Converter={StaticResource BoolToVis}}"
-                      Margin="0,8,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0"
-                               Text="{Binding DestinationName, StringFormat='→ {0}'}"
-                               Foreground="#0A84FF"
-                               FontSize="11"
-                               VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis" />
-                    <Button Grid.Column="1"
-                            Content="Cancel"
-                            Command="{Binding CancelCommand}"
-                            Margin="4,0"
-                            Padding="8,2"
-                            Background="#383842"
-                            Foreground="#FFFFFF"
-                            BorderThickness="0"
-                            FontSize="10"
-                            Cursor="Hand" />
-                    <Button Grid.Column="2"
-                            Content="Confirm &amp; Send"
-                            Command="{Binding ConfirmCommand}"
-                            Padding="8,2"
-                            Background="#0A84FF"
-                            Foreground="#FFFFFF"
-                            BorderThickness="0"
-                            FontSize="10"
-                            Cursor="Hand" />
-                </Grid>
-                </StackPanel>
-                </Expander>
-            </StackPanel>
-            </ScrollViewer>
-
-            <!-- Footer: hotkey, and the phone endpoint address to dial -->
-            <StackPanel Grid.Row="2" Margin="0,2,0,0">
-                <TextBlock FontSize="10"
-                           Foreground="#A7B8CD"
-                           Text="{Binding HotkeyLabel, StringFormat='Push-to-talk: {0} (hold to capture)'}" />
-                <TextBlock Visibility="{Binding ShowDetails, Converter={StaticResource BoolToVis}}"
-                           Text="{Binding PhoneStatus}"
-                           FontSize="10"
-                           FontFamily="Consolas"
-                           Foreground="#8E8E93"
-                           Margin="0,3,0,0"
-                           TextWrapping="Wrap" />
-            </StackPanel>
-        </Grid>
+                </ScrollViewer>
+            </Border>
+        </StackPanel>
     </Border>
 </Window>
