@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>Raw speech-to-text output plus its timing.</summary>
-public sealed record TranscriptionResult(string Text, long ElapsedMilliseconds, double AudioSeconds)
+public sealed record TranscriptionResult(string Text, long ElapsedMilliseconds, double AudioSeconds, double? Confidence = null)
 {
     public bool IsEmpty => string.IsNullOrWhiteSpace(Text);
 

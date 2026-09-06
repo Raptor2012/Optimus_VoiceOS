@@ -3,6 +3,7 @@ namespace Optimus.Shell.ViewModels;
 using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using Optimus.Core.ExecutionPolicy;
+using Optimus.Core.Pipeline;
 
 /// <summary>One agent's remaining five-hour execution window.</summary>
 public sealed record AgentCapacity(string Name, double CapacityPercent, bool IsLow);
@@ -16,16 +17,19 @@ public sealed class AgentCapacityViewModel : IDisposable
     private readonly DispatcherTimer _timer;
     private readonly Func<IReadOnlyDictionary<ExecutionProvider, ProviderCapacity>>? _quotaProvider;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly LatencyTracker? _latencyTracker;
     private readonly Dictionary<ExecutionProvider, DateTimeOffset> _windowStarted = new();
     private bool _disposed;
 
     public AgentCapacityViewModel(
         Func<IReadOnlyDictionary<ExecutionProvider, ProviderCapacity>>? quotaProvider = null,
         Func<DateTimeOffset>? clock = null,
-        bool startPolling = true)
+        bool startPolling = true,
+        LatencyTracker? latencyTracker = null)
     {
         _quotaProvider = quotaProvider;
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
+        _latencyTracker = latencyTracker;
         DateTimeOffset now = _clock();
         foreach (ExecutionProvider provider in Providers.Keys)
             _windowStarted[provider] = now;
@@ -42,6 +46,11 @@ public sealed class AgentCapacityViewModel : IDisposable
     }
 
     public ObservableCollection<AgentCapacity> Agents { get; }
+
+    /// <summary>Last end-to-end voice latency, when the shell is connected to a tracker.</summary>
+    public long LastPipelineLatencyMilliseconds => _latencyTracker?.Snapshot.TotalMilliseconds ?? 0;
+
+    public bool PipelineLatencyWithinTarget => _latencyTracker?.Snapshot.MeetsTarget ?? true;
 
     /// <summary>Recomputes all bars immediately; useful after a quota response or in tests.</summary>
     public void Refresh()
