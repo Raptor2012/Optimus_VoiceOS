@@ -65,6 +65,13 @@ public sealed class PhoneNarrationSettingsEventArgs(string mode, bool narrateToo
     public bool NarrateToolsAndSkills { get; } = narrateToolsAndSkills;
 }
 
+public sealed class PhoneApprovalResolutionEventArgs(string sessionId, string requestId, string decisionId) : EventArgs
+{
+    public string SessionId { get; } = sessionId;
+    public string RequestId { get; } = requestId;
+    public string DecisionId { get; } = decisionId;
+}
+
 /// <summary>
 /// One direct TCP endpoint the phone connects to over LAN or Tailscale.
 /// </summary>
@@ -144,6 +151,9 @@ public sealed class PhoneEndpoint : IDisposable
 
     /// <summary>The phone edited the active draft.</summary>
     public event EventHandler<string>? DraftEdited;
+
+    /// <summary>The phone resolved an approval decision.</summary>
+    public event EventHandler<PhoneApprovalResolutionEventArgs>? ApprovalResolved;
 
     private long _playbackGeneration;
 
@@ -326,6 +336,14 @@ public sealed class PhoneEndpoint : IDisposable
                 RaiseEditDraft(json);
                 break;
 
+            case "refreshProjects":
+                ProjectsRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
+            case "resolveApproval":
+                RaiseResolveApproval(json);
+                break;
+
             default:
                 break;
         }
@@ -426,14 +444,34 @@ public sealed class PhoneEndpoint : IDisposable
         ConfirmRequested?.Invoke(this, new PhoneConfirmEventArgs(destinationId, text));
     }
 
+    private void RaiseResolveApproval(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            string? sessId = root.TryGetProperty("sessionId", out JsonElement s) ? s.GetString() : null;
+            string? reqId = root.TryGetProperty("requestId", out JsonElement r) ? r.GetString() : null;
+            string? decId = root.TryGetProperty("decisionId", out JsonElement d) ? d.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(sessId) && !string.IsNullOrWhiteSpace(reqId) && !string.IsNullOrWhiteSpace(decId))
+            {
+                ApprovalResolved?.Invoke(this, new PhoneApprovalResolutionEventArgs(sessId, reqId, decId));
+            }
+        }
+        catch (JsonException) { }
+    }
+
     /// <summary>Pushes the destination list and each one's readiness.</summary>
     public void SendDestinations(IReadOnlyList<PhoneDestination> destinations) =>
         SendJson(new { t = "destinations", destinations });
 
-    /// <summary>Pushes the live AO projects list.</summary>
+    /// <summary>Pushes discovered AO projects to the phone.</summary>
     public void SendProjects(object projects) =>
         SendJson(new { t = "projects", projects });
 
+    /// <summary>Pushes an agent update event to the phone.</summary>
+    public void SendAgentUpdate(string text, string activity, string source) =>
+        SendJson(new { t = "agentUpdate", text, activity, source });
     /// <summary>Reports the outcome of a send. This is the phone's final summary.</summary>
     public void SendSendResult(bool ok, string destinationName, string detail) =>
         SendJson(new { t = "sendResult", ok, destination = destinationName, detail });

@@ -28,6 +28,7 @@ public partial class App : Application
     private WidgetViewModel? _viewModel;
     private VoicePipeline? _pipeline;
     private DestinationRegistry? _destinations;
+    private AoClient? _aoClient;
     private PhoneEndpoint? _phoneEndpoint;
     private PhoneSession? _phoneSession;
     private SpokenReviewPlayer? _speech;
@@ -67,32 +68,23 @@ public partial class App : Application
         _approvalListener = new OneShotApprovalListener(_audioCaptureService);
         _viewModel.AttachApprovalListener(_approvalListener);
 
-        // Configure destinations: Windows apps + live AO daemon destinations.
-        var aoClient = new AoClient();
-        var aoBridge = new AoProjectBridge(aoClient);
-        _destinations = new DestinationRegistry(aoClient);
+        // The configured Windows and AO targets. Nothing is selected by default; the user picks.
+        _aoClient = new AoClient();
+        _destinations = new DestinationRegistry(_aoClient);
         _viewModel.AttachDestinations(_destinations);
         _viewModel.LoadPreferences(PersonalSettings.DefaultPath);
 
-        // Asynchronously discover and register any active AO projects
+        // Probe AO sessions asynchronously so they populate without blocking UI startup
         _ = Task.Run(async () =>
         {
             try
             {
-                var projects = await aoClient.GetProjectsAsync().ConfigureAwait(false);
-                foreach (var proj in projects)
-                {
-                    var adapter = new AoDestinationAdapter(aoClient, proj.Id, displayName: $"AO: {proj.Name}");
-                    _destinations.Register(adapter);
-                }
-                if (projects.Count > 0)
-                {
-                    Dispatcher.Invoke(() => _viewModel.AttachDestinations(_destinations));
-                }
+                await _destinations.RefreshAoDestinationsAsync().ConfigureAwait(false);
+                Dispatcher.Invoke(() => _viewModel?.RefreshDestinations());
             }
             catch
             {
-                // Daemon offline or starting
+                // Background AO daemon discovery failure is non-fatal
             }
         });
 
@@ -161,6 +153,7 @@ public partial class App : Application
         {
             WidgetViewModel viewModel = _viewModel;
             _phoneEndpoint = new PhoneEndpoint();
+            var aoBridge = new AoProjectBridge(_aoClient);
             _phoneSession = new PhoneSession(
                 _phoneEndpoint,
                 _pipeline,
@@ -196,7 +189,8 @@ public partial class App : Application
                 }),
                 onDraftEdited: text => Dispatcher.Invoke(() =>
                     viewModel.DraftText = text),
-                aoBridge: aoBridge);
+                aoBridge: aoBridge,
+                aoClient: _aoClient);
             _phoneSession.ProcessCapturedAudio = pcm => Dispatcher.Invoke(() => viewModel.ProcessPhoneAudio(pcm));
             _phoneSession.CaptureBeginning = () => Dispatcher.Invoke(viewModel.PhoneCaptureBeginning);
             _phoneSession.CaptureAbandoned = () => Dispatcher.Invoke(viewModel.PhoneCaptureAbandoned);
@@ -312,6 +306,7 @@ public partial class App : Application
         _speech?.Dispose();
         _ttsSynthesizer?.Dispose();
         _phoneSession?.Dispose();
+        _aoClient?.Dispose();
         if (_phoneEndpoint != null)
         {
             _phoneEndpoint.NarrationSettingsChanged -= OnPhoneNarrationSettingsChanged;

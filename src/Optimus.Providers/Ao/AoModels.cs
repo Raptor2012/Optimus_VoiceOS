@@ -53,14 +53,61 @@ public sealed record AoConversationMessage(
     [property: JsonPropertyName("createdAt")] DateTimeOffset? CreatedAt = null
 );
 
+public sealed record AoConversationActivity(
+    [property: JsonPropertyName("id")] string? Id = null,
+    [property: JsonPropertyName("kind")] string? Kind = null,
+    [property: JsonPropertyName("activityStatus")] string? ActivityStatus = null,
+    [property: JsonPropertyName("delta")] string? Delta = null,
+    [property: JsonPropertyName("detail")] object? Detail = null,
+    [property: JsonPropertyName("createdAt")] DateTimeOffset? CreatedAt = null
+);
+
+public sealed record AoConversationTurn(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("state")] string? State = null,
+    [property: JsonPropertyName("providerTurnId")] string? ProviderTurnId = null,
+    [property: JsonPropertyName("requestedAt")] DateTimeOffset? RequestedAt = null,
+    [property: JsonPropertyName("startedAt")] DateTimeOffset? StartedAt = null,
+    [property: JsonPropertyName("completedAt")] DateTimeOffset? CompletedAt = null,
+    [property: JsonPropertyName("plan")] object? Plan = null
+);
+
+public sealed record AoConversationResponse(
+    [property: JsonPropertyName("conversationId")] string? ConversationId = null,
+    [property: JsonPropertyName("sessionId")] string? SessionId = null,
+    [property: JsonPropertyName("turns")] IReadOnlyList<AoConversationTurn>? Turns = null,
+    [property: JsonPropertyName("messages")] IReadOnlyList<AoConversationMessage>? Messages = null,
+    [property: JsonPropertyName("activities")] IReadOnlyList<AoConversationActivity>? Activities = null
+);
+
 public sealed record AoSendMessageRequest(
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("clientMessageId")] string? ClientMessageId = null
+);
+
+public sealed record AoLegacySendMessageRequest(
     [property: JsonPropertyName("message")] string Message
 );
 
 public sealed record AoSendMessageResponse(
-    [property: JsonPropertyName("ok")] bool Ok,
-    [property: JsonPropertyName("sessionId")] string SessionId,
+    [property: JsonPropertyName("ok")] bool Ok = true,
+    [property: JsonPropertyName("sessionId")] string? SessionId = null,
+    [property: JsonPropertyName("turnId")] string? TurnId = null,
+    [property: JsonPropertyName("duplicate")] bool Duplicate = false,
     [property: JsonPropertyName("message")] string? Message = null
+);
+
+public sealed record AoResolveApprovalRequest(
+    [property: JsonPropertyName("decisionId")] string DecisionId
+);
+
+public sealed record AoCdcEvent(
+    long Seq,
+    string? ProjectId,
+    string? SessionId,
+    string Type,
+    string? PayloadJson,
+    DateTimeOffset CreatedAt
 );
 
 public sealed record AoProjectsResponse(
@@ -69,8 +116,4 @@ public sealed record AoProjectsResponse(
 
 public sealed record AoSessionsResponse(
     [property: JsonPropertyName("sessions")] IReadOnlyList<AoSession> Sessions
-);
-
-public sealed record AoConversationResponse(
-    [property: JsonPropertyName("messages")] IReadOnlyList<AoConversationMessage>? Messages = null
 );
