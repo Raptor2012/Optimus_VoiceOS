@@ -1,5 +1,10 @@
 namespace Optimus.Core.ExecutionPolicy;
 
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+
 /// <summary>Routes roles in fixed priority order without silently falling back.</summary>
 public static class RoleRouter
 {
@@ -313,8 +318,18 @@ public sealed class ProjectLeaderConversationRegistry
         }
     }
 
+    public LeaderConversation? Get(string projectId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
+        lock (_gate)
+        {
+            return _conversations.TryGetValue(projectId, out LeaderConversation? existing) ? existing : null;
+        }
+    }
+
     public LeaderConversation Transfer(string projectId, ExecutionProvider provider)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
         lock (_gate)
         {
             LeaderConversation current = GetOrCreate(projectId, provider);

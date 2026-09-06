@@ -1,5 +1,8 @@
 namespace Optimus.Core.ExecutionPolicy;
 
+using System;
+using System.Collections.Generic;
+
 /// <summary>The small set of execution roles used by the personal-use orchestrator.</summary>
 public enum ExecutionRole
 {
@@ -83,14 +86,22 @@ public enum PlanRevisionState
 /// <summary>A user-visible plan revision. Approval is tied to the revision number.</summary>
 public sealed record ExecutionPlanRevision
 {
-    public ExecutionPlanRevision(string planId, int revision, string objective, string approachSummary,
-        IReadOnlyList<PlanTaskCard> tasks, PlanRevisionState state, DateTimeOffset createdAtUtc, string? changeRequest = null)
+    public ExecutionPlanRevision(
+        string planId,
+        int revision,
+        string objective,
+        string approachSummary,
+        IReadOnlyList<PlanTaskCard> tasks,
+        PlanRevisionState state,
+        DateTimeOffset createdAtUtc,
+        string? changeRequest = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(planId);
         ArgumentException.ThrowIfNullOrWhiteSpace(objective);
         ArgumentException.ThrowIfNullOrWhiteSpace(approachSummary);
         ArgumentNullException.ThrowIfNull(tasks);
         ArgumentOutOfRangeException.ThrowIfLessThan(revision, 1);
+
         PlanId = planId;
         Revision = revision;
         Objective = objective;
@@ -101,13 +112,13 @@ public sealed record ExecutionPlanRevision
         ChangeRequest = changeRequest;
     }
 
-    public string PlanId { get; }
-    public int Revision { get; }
-    public string Objective { get; }
-    public string ApproachSummary { get; }
-    public IReadOnlyList<PlanTaskCard> Tasks { get; }
+    public string PlanId { get; init; }
+    public int Revision { get; init; }
+    public string Objective { get; init; }
+    public string ApproachSummary { get; init; }
+    public IReadOnlyList<PlanTaskCard> Tasks { get; init; }
     public PlanRevisionState State { get; init; }
-    public DateTimeOffset CreatedAtUtc { get; }
+    public DateTimeOffset CreatedAtUtc { get; init; }
     public string? ChangeRequest { get; init; }
 
     /// <summary>The fields needed to render the approval card.</summary>
@@ -165,3 +176,13 @@ public sealed record HandoffCheckpoint(
         ArgumentException.ThrowIfNullOrWhiteSpace(nextAction);
     }
 }
+
+public sealed record HandoffRecord(
+    string TaskId,
+    string ProjectId,
+    ExecutionProvider OutgoingProvider,
+    ExecutionProvider ReplacementProvider,
+    HandoffCheckpoint Checkpoint,
+    DateTimeOffset TimestampUtc,
+    IReadOnlyList<string> PreservedUncommittedFiles
+);
