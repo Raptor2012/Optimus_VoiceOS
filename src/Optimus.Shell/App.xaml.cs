@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using Optimus.Core.Audio;
+using Optimus.Core.Digests;
 using Optimus.Core.Hotkeys;
 using Optimus.Core.Phone;
 using Optimus.Core.Narration;
@@ -37,6 +38,7 @@ public partial class App : Application
     private PhoneApprovalListener? _phoneApprovalListener;
     private PiperSpeechSynthesizer? _ttsSynthesizer;
     private AgentNarrationCoordinator? _narration;
+    private DigestScheduler? _digestScheduler;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -262,6 +264,47 @@ public partial class App : Application
             _viewModel.LoadManualDraft(manualDraft);
         }
 
+        if (_pipeline?.DigestSummarizer != null && _aoClient != null)
+        {
+            WidgetViewModel viewModel = _viewModel;
+            _digestScheduler = new DigestScheduler(_pipeline.DigestSummarizer, _aoClient);
+            _digestScheduler.IsSpeaking = () => (_speech?.IsSpeaking == true) || (_narration?.IsSpeakingOnPc == true);
+            _digestScheduler.IsAwaitingApproval = () => viewModel.State is Models.WidgetState.Confirm or Models.WidgetState.AwaitingApproval;
+            _digestScheduler.IsUserSpeaking = () => _controller?.AudioCaptureService.IsCapturing == true;
+            _digestScheduler.OnDigestProduced = digest => Dispatcher.Invoke(() =>
+            {
+                if (digest.RequiresDecision)
+                {
+                    viewModel.SetPendingDecision(new DecisionModel
+                    {
+                        Id = digest.Id,
+                        Title = digest.Headline,
+                        Description = digest.SpokenSummary,
+                        ProjectName = digest.ProjectName,
+                        TaskTitle = digest.TaskRef,
+                        Options = digest.DecisionOptions ?? Array.Empty<string>()
+                    });
+                }
+                viewModel.SetAssistantResponse(digest.Headline, digest.DetailedSummary ?? digest.SpokenSummary);
+            });
+
+            if (_speech != null)
+            {
+                _digestScheduler.OnSpeakDigest = digest => _ = _speech.SpeakPromptAsync(digest.SpokenSummary);
+                _digestScheduler.OnCancelSpeaking = () => _speech.Cancel();
+            }
+
+            _digestScheduler.OnOpenOriginalResponse = original => Dispatcher.Invoke(() =>
+            {
+                viewModel.ShowDetails = true;
+                viewModel.AssistantResponseHeadline = "ORIGINAL RESPONSE";
+                viewModel.AssistantResponseText = original;
+            });
+
+            viewModel.RequestOpenDetails = () => _digestScheduler?.OpenDetails();
+            _digestScheduler.Start();
+        }
+
         _controller.Start();
 
         var mainWindow = new MainWindow(_viewModel);
@@ -300,6 +343,7 @@ public partial class App : Application
             _viewModel.NarrationMuteChanged -= OnNarrationMuteChanged;
         }
         _narration?.Dispose();
+        _digestScheduler?.Dispose();
         _phoneApprovalListener?.Dispose();
         _approvalListener?.Dispose();
         _phoneSpeech?.Dispose();

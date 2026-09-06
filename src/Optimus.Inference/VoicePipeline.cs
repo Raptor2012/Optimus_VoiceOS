@@ -14,6 +14,7 @@ public sealed class VoicePipeline : IDisposable
     private readonly ISpeechTranscriber _transcriber;
     private readonly IPromptCleaner _cleaner;
     private readonly IIntentInterpreter? _intentInterpreter;
+    private readonly IDigestSummarizer? _digestSummarizer;
     private readonly LlamaServerProcess? _llamaServer;
     private readonly bool _ownsDependencies;
     private bool _disposed;
@@ -24,10 +25,12 @@ public sealed class VoicePipeline : IDisposable
         var llama = new LlamaServerProcess(ModelLocator.LlamaServerExecutable, ModelLocator.GemmaCleanupModel);
         var cleaner = new GemmaPromptCleaner(llama);
         var interpreter = new GemmaIntentInterpreter(llama);
+        var summarizer = new GemmaDigestSummarizer(llama);
 
         _transcriber = transcriber;
         _cleaner = cleaner;
         _intentInterpreter = interpreter;
+        _digestSummarizer = summarizer;
         _llamaServer = llama;
         _ownsDependencies = true;
     }
@@ -36,11 +39,13 @@ public sealed class VoicePipeline : IDisposable
         ISpeechTranscriber transcriber,
         IPromptCleaner cleaner,
         IIntentInterpreter? intentInterpreter = null,
+        IDigestSummarizer? digestSummarizer = null,
         bool ownsDependencies = false)
     {
         _transcriber = transcriber ?? throw new ArgumentNullException(nameof(transcriber));
         _cleaner = cleaner ?? throw new ArgumentNullException(nameof(cleaner));
         _intentInterpreter = intentInterpreter;
+        _digestSummarizer = digestSummarizer;
         _ownsDependencies = ownsDependencies;
     }
 
@@ -51,6 +56,8 @@ public sealed class VoicePipeline : IDisposable
     public IPromptCleaner Cleaner => _cleaner;
 
     public IIntentInterpreter? IntentInterpreter => _intentInterpreter;
+
+    public IDigestSummarizer? DigestSummarizer => _digestSummarizer;
 
     /// <summary>
     /// Transcribes audio directly through Parakeet without invoking prompt cleanup.
@@ -71,6 +78,7 @@ public sealed class VoicePipeline : IDisposable
         _transcriber.EnsureLoaded();
         _cleaner.EnsureLoaded();
         _intentInterpreter?.EnsureLoaded();
+        _digestSummarizer?.EnsureLoaded();
     }
 
     /// <summary>
@@ -96,6 +104,10 @@ public sealed class VoicePipeline : IDisposable
             if (_intentInterpreter != null)
             {
                 await _intentInterpreter.PrimeAsync(cancellationToken).ConfigureAwait(false);
+            }
+            if (_digestSummarizer != null)
+            {
+                await _digestSummarizer.PrimeAsync(cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -172,6 +184,7 @@ public sealed class VoicePipeline : IDisposable
             _transcriber.Dispose();
             _cleaner.Dispose();
             _intentInterpreter?.Dispose();
+            _digestSummarizer?.Dispose();
             _llamaServer?.Dispose();
         }
     }
