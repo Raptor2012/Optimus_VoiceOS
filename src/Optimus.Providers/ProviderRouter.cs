@@ -30,14 +30,22 @@ public sealed class ProviderRouter
 
     /// <summary>Creates a router with the built-in desktop provider adapters.</summary>
     public ProviderRouter()
-        : this(new IProviderAdapter[]
+        : this(CreateDefaultAdapters())
+    {
+    }
+
+    /// <summary>Gets the built-in adapters, including the REST-backed AO workflow route.</summary>
+    private static IProviderAdapter[] CreateDefaultAdapters()
+    {
+        var aoClient = new AoClient();
+        return new IProviderAdapter[]
         {
             new CodexAdapter(),
             new ClaudeDesktopAdapter(),
             new AntigravityAdapter(),
-            new AoDesktopAdapter(new AoClient())
-        })
-    {
+            new AoDesktopAdapter(aoClient),
+            new AoWorkflowBridge(aoClient)
+        };
     }
 
     /// <summary>Creates a router from provider adapters, keyed by their known provider type.</summary>
@@ -155,9 +163,12 @@ public sealed class ProviderRouter
         await (await ResolveAsync(context).ConfigureAwait(false)).VerifySent().ConfigureAwait(false);
 
     private static string InferProviderId(IProviderAdapter adapter) =>
-        adapter is DesktopProviderAdapter desktop
-            ? desktop.ProviderId
-            : adapter.GetType().Name.Replace("Adapter", string.Empty, StringComparison.OrdinalIgnoreCase);
+        adapter switch
+        {
+            DesktopProviderAdapter desktop => desktop.ProviderId,
+            AoWorkflowBridge => "ao-workflow",
+            _ => adapter.GetType().Name.Replace("Adapter", string.Empty, StringComparison.OrdinalIgnoreCase)
+        };
 
     private static string NormalizeProvider(string provider)
     {
@@ -168,6 +179,8 @@ public sealed class ProviderRouter
             "claudedesktop" => "claude",
             "gemini" => "antigravity",
             "agentorchestrator" => "ao",
+            "aoworkflow" => "ao-workflow",
+            "workflow" => "ao-workflow",
             _ => key.ToLowerInvariant()
         };
     }

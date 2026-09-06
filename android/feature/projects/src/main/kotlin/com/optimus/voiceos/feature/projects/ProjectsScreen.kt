@@ -68,6 +68,7 @@ fun ProjectsScreen(
     onOpenReader: (String, String) -> Unit,
     onCloseReader: () -> Unit,
     onSetThreadSheetVisible: (Boolean) -> Unit,
+    capacityContent: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -101,7 +102,8 @@ fun ProjectsScreen(
                 ProjectListView(
                     projects = state.projects,
                     onSelectProject = onSelectProject,
-                    onTalkHere = onTalkHere
+                    onTalkHere = onTalkHere,
+                    capacityContent = capacityContent
                 )
             }
         }
@@ -149,7 +151,8 @@ fun ProjectsScreen(
 private fun ProjectListView(
     projects: List<ProjectItem>,
     onSelectProject: (ProjectItem) -> Unit,
-    onTalkHere: (String) -> Unit
+    onTalkHere: (String) -> Unit,
+    capacityContent: @Composable () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -181,6 +184,8 @@ private fun ProjectListView(
             }
             Spacer(modifier = Modifier.height(4.dp))
         }
+
+        item { capacityContent() }
 
         items(projects, key = { it.id }) { project ->
             ProjectCard(

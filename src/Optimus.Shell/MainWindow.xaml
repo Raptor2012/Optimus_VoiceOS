@@ -484,6 +484,11 @@
                             </StackPanel>
                         </Expander>
 
+                        <!-- Local five-hour execution capacity for the active agent roles -->
+                        <ctrl:AgentCapacityPanel x:Name="AgentCapacity"
+                                                  DataContext="{Binding CapacityViewModel, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                  Margin="0,0,0,8" />
+
                         <!-- ─── Controls row: Pause · Mute · End ─── -->
                         <Border Background="{StaticResource RaisedBrush}" CornerRadius="10"
                                 Padding="10,8" Margin="0,0,0,8">

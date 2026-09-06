@@ -1,0 +1,29 @@
+<UserControl x:Class="Optimus.Shell.Controls.BatteryBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Height="16"
+             HorizontalAlignment="Stretch">
+    <Grid Height="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Column="0"
+                   Text="{Binding AgentName, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                   Foreground="{StaticResource TextSecondaryBrush}"
+                   FontSize="10"
+                   VerticalAlignment="Center"
+                   Margin="0,0,8,0" />
+        <ProgressBar Grid.Column="1"
+                     Height="8"
+                     VerticalAlignment="Center"
+                     Minimum="0"
+                     Maximum="100"
+                     Value="{Binding CapacityPercent, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                     Foreground="{Binding CapacityBrush, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                     Background="{StaticResource SurfaceBrush}"
+                     BorderThickness="0"
+                     ToolTip="{Binding CapacityPercent, RelativeSource={RelativeSource AncestorType=UserControl}, StringFormat='{}{0:0}% remaining'}" />
+    </Grid>
+</UserControl>
