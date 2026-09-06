@@ -1,281 +1,246 @@
-# Agile personal-use backlog
+# Optimus Voice OS — Agile Backlog: Natural-Language Desktop Operator
 
-- Status: Active
-- Owner: User
-- Current implementer: Claude Opus 5 while Gemini's five-hour allocation recovers
-- Product plan: `PROJECT_PLAN.md`
+- **Status**: Active
+- **Target**: Windows 11 PC (RTX 4070 Laptop GPU) + Google Pixel 9a
+- **Product Specification**: `PROJECT_PLAN.md`
+- **Agent Rules**: `AGENTS.md`
 
-This backlog supersedes the original T003–T029 release plan. Each slice must end with something runnable or directly testable by the user. Do not add speculative protocols, security systems, fallback layers, or generalized frameworks.
+This backlog supersedes the obsolete voice-command, mandatory draft review, destination locking, and enumerated intent vocabulary backlog. Each slice must end with something runnable and verified.
 
-## S000 — Remove obsolete infrastructure
+---
 
-Owner: Gemini
+## Slice 1 — Baseline Audit: Recording, Background, and Interruption
 
-Clean the active MVP branch before more feature work:
+- **Owner**: Gemini 3.8 Flash
+- **Status**: **Completed**
+- **Artifact**: `docs/BASELINE_AUDIT.md`
 
-- do not merge the T003 protocol/crypto branch;
-- keep only these active Markdown files: `README.md`, `PROJECT_PLAN.md`, `AGENTS.md`, `docs/BACKLOG.md`, and `docs/WORKFLOW.md`;
-- delete every other tracked `*.md` file, including old ADRs, architecture/spec/security/performance documents, T001/T002 task contracts, historical reviews, directory placeholder READMEs, and obsolete Claude/Gemini/Sol prompts;
-- remove unused release-oriented protocol, security, conformance-vector, pairing, approval-signing, durable-session, and GPU-scheduler scaffold from active solution/project files;
-- delete obsolete generated tests and dependencies that serve only that infrastructure;
-- reduce active documentation to the personal-use plan and executable slices;
-- preserve reusable WPF, Android, capture, and basic adapter scaffolding;
-- keep the repository building.
+### Deliverable
+Audit and document current recording, background audio, and interruption behavior across Windows and Android platforms with pass/fail evidence.
 
-Do not archive obsolete Markdown elsewhere and do not replace deleted systems with new abstractions. Git history is the archive. The cleanup prompt itself may be deleted after it has been read.
+### Done Criteria & Evidence
+1. **Windows Echo Cancellation Bridge**: Evaluated `EchoCanceller.cs` and native bridge. Confirmed missing `optimus_webrtc_aec.dll` causes fallback to raw audio passthrough, meaning AEC does not function on laptop speakers (**FAIL**).
+2. **Android Recording Gesture Bug**: Reproduced the bug in `VoiceOrb.kt` where keying `pointerInput` on `isCapturing` cancels the press coroutine and triggers immediate capture abortion. Added automated regression test suite `VoiceOrbGestureRegressionTest.kt` (**FAIL / Reproduced & Regression Test Added**).
+3. **Barge-in / Interruption (300 ms Target)**: Verified Android path stops hardware `AudioTrack` within ~40–60 ms of speech detection (**PASS**). Verified Windows WinMM reset stops in ~5 ms on hotkey/headphones, but fails on open laptop speakers due to lack of AEC (**CONDITIONAL**).
+4. **Pixel Background Audio Ownership**: Evaluated `VoiceConversationService.kt`. Confirmed the foreground service is a cosmetic notification shell started/stopped by UI `LaunchedEffect`, while `TalkController` owns the mic (**FAIL**).
+5. **Phone Disconnect / Reconnect**: Verified clean audio buffer cancellation on disconnect. Identified UX gap on reconnect where previous draft is not restored and voice device ownership transfer is missing (**PARTIAL PASS**).
+6. **Documentation & Planning**: Documented all findings in `docs/BASELINE_AUDIT.md`. Updated `PROJECT_PLAN.md`, `AGENTS.md`, and `docs/BACKLOG.md` to establish the new natural-language operator direction.
 
-Done when the Windows and Android scaffolds build, `rg --files -g "*.md"` returns exactly the five active files above, the active solution contains only components needed for the PC/Pixel vertical slice, and the final chat response briefly lists what was removed.
+---
 
-## S001 — Windows hotkey, widget, and microphone
+## Slice 2 — Android Recording: Gesture Repair & Service Lifecycle
 
-Owner: Gemini
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 1
 
-Status: Implemented at `8ddb0a9`; the real-device WASAPI format/release correction is folded into S002.
+### Deliverable
+Replace the flawed gesture handling in `VoiceOrb.kt` and transition microphone and connection ownership into `VoiceConversationService`.
 
-Build a runnable WPF app with a configurable hold-to-talk hotkey, in-memory WASAPI capture, and a tiny floating widget.
+### Scope
+- Decouple `pointerInput` from dynamic recording state (stable key).
+- Implement required gesture semantics:
+  - Pointer down starts temporary utterance capture.
+  - Release ≤ 300 ms initiates/retains continuous conversation mode.
+  - Release > 300 ms completes and submits the held utterance.
+  - Drag-off / cancellation aborts the current gesture without terminating the session.
+- Move `MicCapture` and `PhoneClient` management into `VoiceConversationService` so capture and audio streaming reliably survive phone screen lock and application switching.
+- Add notification actions for Pause and End conversation.
 
-Done when:
+### Done Condition
+Ten short taps, ten varied holds, rapid successive interactions, and screen locking during capture pass on the physical Pixel 9a without self-cancellation.
 
-- the user can launch it;
-- press starts capture and release stops it;
-- widget state is visible;
-- no audio is written to disk;
-- hotkey/microphone failures show a useful error and recover.
+---
 
-## S002 — Local STT and cleanup
+## Slice 3 — Model Evaluation Setup & Benchmark
 
-Owner: Claude Opus 5
+- **Owner**: Claude Opus 5 / Codex
+- **Dependencies**: Slice 1
 
-Connect captured audio to one Parakeet 0.6B English runtime. Display the raw transcript, then run one local Gemma 4 E2B cleanup pass. Allow editing and cancellation.
+### Deliverable
+Create the model evaluation framework, test harness, and 30 fixed workflow scenarios for selecting the resident GPU model on the RTX 4070 Laptop GPU (8 GB VRAM).
 
-Status: WASAPI repair and both runtimes implemented; widget shows raw transcript, editable cleaned draft, and stage timings. Cleanup model switched from Qwen3.5 0.8B to Gemma 4 E2B at the user's direction during the slice, on measured behavior (`PROJECT_PLAN.md`, "Initial local models"). Remaining before this slice is done: the ten-real-prompt dogfood run, which needs a working microphone.
+### Scope
+- Candidates:
+  1. Existing Gemma 4 E2B Q4 (baseline).
+  2. Qwen3.5-4B Q4_K_M (with vision projector).
+  3. Holo3.1-4B Q4_K_M (computer-use specialist).
+- 30 scenarios: 6 per app (Codex, Claude, Antigravity, AO) + 6 cross-app/context scenarios.
+- Metric collection: end-of-speech to first action latency, task completion rate, peak VRAM.
+- Evaluation harness runnable via `dotnet test`.
 
-Before model integration, repair the S001 WASAPI interop blocker: give `WAVEFORMATEX`/`WAVEFORMATEXTENSIBLE` their native layout, correctly recognize extensible float/PCM input, always release every successfully acquired non-empty WASAPI packet, and prove the returned buffer is 16 kHz mono PCM16. Continue directly into S002 after this focused repair; do not create a separate design or review cycle.
+### Done Condition
+Evaluation report identifying which candidate passes the selection gates (≥ 90% completion, zero wrong-target sends, GPU resident within 8 GB VRAM).
 
-Done when ten real coding prompts produce visible drafts, stage timings are logged, and the confirmed snapshot exactly matches what is shown.
+---
 
-Do not implement alternate engines, automatic fallbacks, a model marketplace, GPU arbitration, or benchmark infrastructure.
+## Slice 4 — Runtime Capability: Streaming, Cancellation & Tool Execution
 
-## S003 — Windows destination adapters
+- **Owner**: Claude Opus 5
+- **Dependencies**: Slice 3
 
-Owner: Claude Opus 5
+### Deliverable
+Upgrade the local `llama.cpp` process integration to support streaming output, instant token cancellation, image input, and structured tool calling.
 
-Let the user bind destination cards to exact open Claude, Antigravity, and Codex Windows application targets. Implement focus, insertion, and submit through the tiny adapter interface.
+### Scope
+- Verified CUDA backend offload for the selected model candidate.
+- Native tool-call parsing (JSON schema) with execution only after full parse completion.
+- Image injection pipeline for window/region screenshots.
+- Cancellation handling that aborts generation within ≤ 100 ms when the user interrupts.
 
-Done when:
+### Done Condition
+Automated tests prove structured tool emission, cancellation of active prompt processing, and screenshot input ingestion without VRAM exhaustion.
 
-- Claude receives ten confirmed prompts;
-- Antigravity and Codex each receive five;
-- switching is always manual and visible;
-- an unavailable or ambiguous window fails without sending elsewhere.
+---
 
-Status: adapters implemented and verified. Configured targets are the `claude`, `Antigravity`
-and `ChatGPT` processes; Codex is a workspace inside the ChatGPT desktop app, so the adapter
-binds that app's window and cannot detect which workspace is selected.
+## Slice 5 — Conversational Core: Natural Interaction & Ambiguity Resolution
 
-Verified on the real machine: the last two done-conditions hold — switching is manual (nothing
-is selected or bound by default, and a lone candidate still needs an explicit bind), and the
-ambiguous case fires for real (the ChatGPT app has two identical top-level windows, reported as
-`AmbiguousWindow` with no send possible). The live Win32 path was proven end to end against a
-controlled window: focus, Unicode typing and submit, with the received text compared
-byte-for-byte against the confirmed draft.
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 4
 
-Remaining: the prompt-volume conditions (ten to Claude, five each to Antigravity and Codex).
-Those submit real turns to live agent sessions, and the Claude desktop app hosts the session
-doing this work, so they belong to the user's dogfood pass rather than an automated run.
+### Deliverable
+Implement conversational turn coordination without fixed command syntax, destination locking, or universal draft confirmation.
 
-## S004 — Minimal PC-to-phone connection
+### Scope
+- Single conversational entry point accepting natural language.
+- Contextual reference resolution using recent conversation and foreground window.
+- Implicit authorization: ordinary commands execute directly without asking for confirmation.
+- Contextual clarification: ask only when ambiguous, parameters are missing, or action is destructive.
+- Spoken "stop" immediately aborts desktop actions and pending speech.
 
-Owner: Claude Opus 5
+### Done Condition
+Conversation suite passes with paraphrased requests, pronoun resolution, and contextual clarifications instead of generic confirmation cards.
 
-Add one direct PC endpoint for the Pixel app over private LAN/Tailscale. Use a tiny current-version JSON/audio message set. Keep connection state in memory and use simple reconnect behavior.
+---
 
-Done when the Pixel can connect using a manually configured PC address, start/stop capture, receive draft/status updates, and disconnect/reconnect.
+## Slice 6 — Desktop Tools: Observe, Act, Verify Loop
 
-Status: done, verified on the real Pixel 9a. One TCP endpoint on port 8770 with a 5-byte frame
-header (kind + big-endian length); JSON control messages and binary PCM over the same socket.
-Full run on device: connect, capture, stop, draft returned, disconnect, reconnect. A live
-utterance produced `audio 11.5s / STT 927 ms / cleanup 1473 ms / total 2401 ms`.
+- **Owner**: Claude Opus 5
+- **Dependencies**: Slice 5
 
-The endpoint binds 0.0.0.0 and has no authentication, per this slice. Windows Firewall blocks
-inbound 8770 by default, so on-device testing used `adb reverse`; direct LAN or Tailscale use
-needs an inbound rule the user adds themselves.
+### Deliverable
+Implement the desktop automation toolset: window management, UI Automation inspection, coordinate clicks, text input, and send verification.
 
-Explicitly forbidden in this slice:
+### Scope
+- Tools: `ListWindows`, `FocusWindow`, `InspectAccessibility`, `CaptureRegion`, `InvokeElement`, `ClickCoordinates`, `EnterText`, `PressShortcut`, `ReadVisibleContent`.
+- Prefer accessible element invocation over raw coordinates.
+- Verify outcome before declaring success (clicking send is not proof of acceptance).
+- Gracefully pause execution when manual user input is detected.
 
-- QR pairing;
-- TLS pinning or custom certificates;
-- authentication challenge protocols;
-- signatures, MACs, attestation, key stores, replay ledgers, or biometric signing;
-- version negotiation, compatibility fallbacks, resume tokens, durable delivery, or protocol conformance vectors.
+### Done Condition
+Automated and live tests verify reliable window focusing, control invocation, text entry, and outcome observation across test windows.
 
-## S005 — Pixel 9a UI and confirmation
+---
 
-Owner: Claude Opus 5
+## Slice 7 — Agent Orchestrator (AO) Natural Voice Workflow
 
-Build the small Jetpack Compose phone UI: push-to-talk, transcript/cleaned draft, explicit destination, edit, confirm, cancel, status, and final summary.
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 6
 
-Done when ten phone-originated prompts are processed on the PC and sent to the exact visible destination only after confirmation.
+### Deliverable
+Connect the natural-language conversational operator to the live AO daemon API.
 
-Status: implemented. The phone shows the raw transcript, an editable draft, the PC's destination
-list with live readiness, Confirm and Cancel, and a final summary of what actually happened.
-Confirm sends the exact text on screen to the exact destination chosen; the PC never substitutes
-its own copy of the draft, and Confirm stays disabled until a ready destination is picked, with
-the reason shown.
+### Scope
+- Query project status, active workers, and conversation history via AO REST API.
+- Submit instructions to specified AO sessions.
+- Voice inspection and approval of pending decisions.
+- Background observation of AO events with concise local summarization.
 
-Verified by test: exact-text delivery, no send without confirm, refusal for an unready or unknown
-destination with nothing sent anywhere, failure reported as not sent, and destinations pushed with
-readiness. Verified on the Pixel: connect, capture, and status round trip.
+### Done Condition
+User can ask "What needs me in AO?", inspect pending approvals, and instruct workers entirely by voice from PC and Pixel.
 
-Remaining: the ten-prompt count. It needs speech and a window bound on the PC, so it belongs to
-the user's dogfood pass.
+---
 
-Before closing S005, fix two state bugs found in review:
+## Slice 8 — Provider GUI Workflows: Codex, Claude & Antigravity
 
-- phone Cancel and phone send completion must transition the desktop widget too, so the same
-  draft cannot remain independently confirmable and be sent twice;
-- starting any new phone utterance must clear the prior destination selection, requiring an
-  explicit choice for the new prompt.
+- **Owner**: Claude Opus 5 / Gemini
+- **Dependencies**: Slice 6
 
-## S006 — Local TTS and exact spoken review
+### Deliverable
+Robust application adapters for Codex, Claude Desktop, and Antigravity.
 
-Owner: Claude Opus 5
+### Scope
+- Accessible tree characterization for each app: selected conversation, composer, message history, agent responses.
+- Application search/history navigation to locate discussions.
+- Context-aware text insertion and send verification.
+- Safe boundary handling: refuse to guess when conversations are ambiguous or unreadable.
 
-Make spoken review part of the primary desktop path. Run a narrow measurement of Kokoro and
-Piper on the target PC, select one engine, and integrate only that winner. Create one original
-deep, cinematic, calm-authoritative machine voice profile. It may have weight, restraint, clarity,
-and resonance, but must not imitate Optimus Prime, a specific actor, or an existing performance.
-Keep it warm and stream playback toward the latency targets in `PROJECT_PLAN.md`.
+### Done Condition
+Each application passes its dedicated live task suite: find conversation, send request, observe public response, report summary.
 
-After cleanup, speak the exact cleaned draft followed by the exact destination and the question:
-`Send this to <destination>, or redictate?` Disable capture during playback and play a short chime
-when approval listening begins.
+---
 
-Done when ten varied drafts, including identifiers and punctuation, are displayed and spoken
-exactly; playback starts quickly enough for normal use; microphone input cannot hear the app's
-own TTS; warm time-to-first-audio and segment gaps are measured; and the mouse buttons remain
-available only as fallback controls.
+## Slice 9 — Personal Memory & Response Monitoring
 
-Do not build multiple-engine routing, cloud TTS, voice cloning, impersonations, barge-in, or a
-general audio graph.
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 8
 
-## S007 — Spoken approval, redictation, and explicit voice routing
+### Deliverable
+Local SQLite memory store for user preferences, application aliases, and conversation history; passive response monitor.
 
-Owner: Claude Opus 5
+### Scope
+- Store app/project aliases and behavioral preferences.
+- Retain rolling 30-day interaction history and up to 100 recent task summaries.
+- Revalidate remembered conversation references before acting.
+- Passive response monitoring that does not steal window focus.
 
-After the TTS review ends, automatically capture one short local command without another hotkey.
-Recognize the finite affirmative, redictate, and cancel vocabulary in `PROJECT_PLAN.md`. Do not
-run Gemma cleanup on approval commands. An unclear command reprompts and sends nothing.
+### Done Condition
+Memories are correctly recalled during turns; user can inspect and forget memories; response summaries are concise (1–3 sentences).
 
-Support explicit configured destination prefixes such as `To Codex Project Y`. Resolve only an
-exact unique voice alias, remove the routing phrase from the displayed prompt, and ask when it is
-missing or ambiguous. Clear the selected destination on every new utterance.
+---
 
-Done when the user can complete ten desktop prompts using only one initial hotkey hold/release,
-with affirmative variants sending the exact visible snapshot, redictate replacing it completely,
-cancel sending nothing, and ambiguous routing never selecting a destination.
+## Slice 10 — Companion Overhaul: Fluid-Ink Visuals & System Tray
 
-## S008 — Pixel spoken review and approval
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 5, Slice 9
 
-Owner: Claude Opus 5
+### Deliverable
+Complete visual and lifecycle overhaul for Windows WPF companion and Pixel Compose app.
 
-Route synthesized review audio to the device that initiated the request. For a Pixel utterance,
-the PC synthesizes the same exact draft/destination review and streams it to the phone; the phone
-plays it, then captures the approval command after the chime. Confirm/cancel/send/result state is
-mirrored between phone and PC as one lifecycle.
+### Scope
+- Shared fluid-ink visual design (Periwinkle `#8C9EFF` / Cyan `#67D9E8`) via AGSL on Android and HLSL Shader Effect on Windows.
+- Windows tray icon: Show/Hide, Start/Pause, Mute/Unmute, Stop, Quit.
+- Proper window clamping, DPI scaling, and non-activating window styles.
+- Pixel 3-tab layout polish (Talk, Projects, Updates) with unified tokens.
 
-Done when ten Pixel-originated prompts can be reviewed, confirmed or redictated, and sent without
-touching the PC or pressing a phone confirmation button. Disconnect during review or approval
-sends nothing and returns to a usable state.
+### Done Condition
+Both surfaces reflect synchronized state transitions (Idle, Listening, Interpreting, Acting, Speaking) with smooth 180–300 ms animations.
 
-## S009 — Observe coding-agent windows
+---
 
-Owner: Claude Opus 5
+## Slice 11 — End-to-End Polish & Latency Tuning
 
-Extend each exact-window adapter with the smallest practical Windows UI Automation observer.
-Prototype and prove one application first, then implement Claude, Antigravity, and Codex-specific
-observers. Capture newly visible English reasoning/progress messages, coarse events, visible tool
-and skill activity, agent questions, completion, and the visible final response. Never claim
-access to private hidden chain-of-thought, and deduplicate text repeated by UI rerenders.
+- **Owner**: Claude Opus 5 / Gemini
+- **Dependencies**: Slices 2–10
 
-Done when a real prompt to each application produces correctly attributed visible progress and a
-final response from only the bound window; activity in another window is ignored.
+### Deliverable
+Physical-device dogfood pass on host laptop and Pixel 9a, latency optimization, and device handoff.
 
-Status: implemented and connected to the live send path. Observation is baselined immediately
-before submit, remains scoped to the exact bound HWND, ignores the user's echoed prompt, emits
-only appended visible text, and stops on a new run or stale binding. Automated exact-window,
-rerender, streaming-suffix, classification, and mapping tests pass. Remaining: one real prompt
-through each of Claude, Antigravity, and Codex to characterize their current UI Automation trees.
+### Scope
+- Single-owner voice arbitration between PC and Pixel.
+- Seamless reconnection restoring visible state on Pixel without replaying speech.
+- Latency profiling against targets:
+  - Speech to first simple action ≤ 1.5 s median.
+  - Speech to first spoken response ≤ 2.0 s median.
+  - Interruption to silence ≤ 300 ms.
+- Tune voice endpointing (pre-roll and trailing silence) to the user's natural speaking rhythm.
 
-## S010 — Event-driven voice feedback
+### Done Condition
+Full physical dogfood checklist passed on real hardware under normal development workload.
 
-Owner: Claude Opus 5
+---
 
-Add a visible narration-mode control to both widget and phone: `Concise` and `Comprehensive`.
-Concise speaks transitions such as planning, editing files, running tests, tests passed or failed,
-agent question, completed, and the final response. Comprehensive streams every newly visible
-English reasoning/progress message and the final response. Add a separate `Narrate tools & skills`
-toggle that announces visible tool/skill names, intent, commands, and short results. Long code,
-binary data, and repetitive logs are announced/summarized instead of spelled out.
+## Slice 12 — Cleanup & Final Handoff
 
-Speech must be incremental: start on complete safe phrases/sentences instead of waiting for the
-whole agent response, preserve ordering, and avoid speaking stale text after a newer run starts.
+- **Owner**: Gemini 3.8 Flash
+- **Dependencies**: Slice 11
 
-Done when PC- and Pixel-originated jobs receive ordered, non-repetitive speech on the correct
-device; both narration modes work; the tools/skills toggle works independently; and long visible
-responses begin speaking within the warm streaming latency budget rather than after completion.
+### Deliverable
+Remove obsolete test harnesses and deprecated scaffold; deliver a standalone, runnable personal build.
 
-Status: implemented end to end. The observer feeds the generation-safe narration scheduler and
-warm Piper process; PC-originated runs play locally and Pixel-originated runs use the ordered S008
-PCM stream without fallback rerouting. Concise/Comprehensive and the independent tools/skills
-toggle are visible on both devices, with phone changes applied to the PC scheduler. Existing text
-is baselined before send and stale speech is cancelled when a newer utterance starts. Remaining:
-real-device dogfood to tune per-app UI text classification and narration phrasing.
+### Scope
+- Eliminate dead code, unused flags, and obsolete destination-lock artifacts.
+- Single documented launch command.
+- Personal user guide covering conversational operation, takeover, tray controls, and memory.
 
-## S011 — Dogfood and measured latency fixes
-
-September 5 update (supersedes the original binding bullets below): personal voice-first slice
-implemented by Codex at the user's request. Remember agent/window preferences, first-use lone-window
-binding without an extra click, exact-title restoration, saved spoken window aliases, spoken edits,
-optional cleanup (off by default), optional short review, shared phone/PC processing. Matching dark
-UI, hidden details, phone saved connection, commander voice coloration. Full readback and affirmative
-send remain the default. Tests cover spoken edits requiring fresh approval and no destination/draft loss.
-
-Next runnable slice: continuous voice-session initiation and follow-ups, then true conversation
-selection inside each app. HWND aliases alone do not select a task/tab. Dogfood current changes first;
-no further architecture or security review. Pixel was not attached during this implementation pass.
-
-Immediate next task for Gemini: remove the mouse-only window-binding step on PC and Pixel.
-
-- Implement the spoken window-selection flow in PROJECT_PLAN.md using the existing local TTS,
-  STT, and phone audio path. Check readiness before the send-review question.
-- One candidate: announce its title and accept "use that window"/"yes" to bind. Multiple:
-  announce numbered titles and accept an explicit number or exact unique title. No candidates:
-  speak the reason and allow "refresh windows" or "cancel". Keep the pending draft.
-- After binding, read the exact draft and app/window title, then listen for separate send
-  approval. Window-selection speech must never become send approval. Reuse live bindings;
-  reopen spoken selection if the bound window disappears. Mirror choices/status on Pixel.
-- Add "use original" to recover the raw prompt by voice and require fresh spoken review.
-  Fix cleanup deleting meaningful instructions. Screenshot regression input: "Just testing
-  this uh in anti-gravity, do not reply anything, just send this message." The latter two
-  clauses must remain; do not treat casual mention of an app as a routing prefix.
-- Verify first-use binding from both devices without mouse/second hotkey, two-window choice,
-  refresh after a window closes, and separate bind/send confirmation. Then build and provide
-  a runnable PC build and Pixel APK. No new planning documents or generalized command framework.
-
-Owner: Claude Opus 5; Sol reviews only blockers
-
-Use the app during real coding from both Windows and Pixel. Record simple timestamps, fix the largest measured delays, and remove friction discovered in use.
-
-Done when the user says the tool is useful enough to keep running during normal work.
-
-## Optional later slices
-
-- S012: run-at-startup, settings polish, and a simple installer.
-- S013: always-listening wake word for truly zero-key initiation, only if the user wants it after
-  the one-hold workflow is proven.
-- S014: security hardening only if the user later wants access outside private LAN/Tailscale or sees a concrete risk worth addressing.
-
-## Review rule
-
-Sol reviews working slices, not speculative documents. Report only defects that can cause unintended sending, wrong destination, intent change, loss of the current prompt, broken normal use, or failure of the slice's done conditions. Optional hardening is a note, not a review loop.
+### Done Condition
+User can launch and operate Optimus during daily development on Windows and Pixel without developer tooling.
