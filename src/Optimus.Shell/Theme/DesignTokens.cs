@@ -128,6 +128,12 @@ public static class DesignTokens
         public const string SurfaceWarningBrush = "SurfaceWarningBrush";
         public const string WarningBrush = "WarningBrush";
 
+        // Aliases for compatibility
+        public const string BgBrush = "BgBrush";
+        public const string TextBrush = "TextBrush";
+        public const string SecondaryBrush = "SecondaryBrush";
+        public const string RaisedBrush = "RaisedBrush";
+
         public const string DropShadowColor = "DropShadowColor";
 
         public const string ControlCornerRadius = "ControlCornerRadius";
@@ -168,6 +174,11 @@ public static class DesignTokens
         dict[ResourceKeys.SurfaceErrorBrush] = CreateFrozenBrush(SurfaceErrorHex);
         dict[ResourceKeys.SurfaceWarningBrush] = CreateFrozenBrush(SurfaceWarningHex);
         dict[ResourceKeys.WarningBrush] = CreateFrozenBrush(WarningHex);
+
+        dict[ResourceKeys.BgBrush] = dict[ResourceKeys.BackgroundBrush];
+        dict[ResourceKeys.TextBrush] = dict[ResourceKeys.TextPrimaryBrush];
+        dict[ResourceKeys.SecondaryBrush] = dict[ResourceKeys.TextSecondaryBrush];
+        dict[ResourceKeys.RaisedBrush] = dict[ResourceKeys.SurfaceRaisedBrush];
 
         dict[ResourceKeys.DropShadowColor] = ColorDropShadow;
 

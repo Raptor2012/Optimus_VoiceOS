@@ -1,19 +1,24 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                    xmlns:vm="clr-namespace:Optimus.Shell.ViewModels">
     <!-- Refined Dark Palette -->
     <!-- Background: #0B111B -> #101114 -->
     <SolidColorBrush x:Key="BackgroundBrush" Color="#101114" />
+    <SolidColorBrush x:Key="BgBrush" Color="#101114" />
 
     <!-- Main surfaces: #111C2B -> #181A1F; raised surfaces #1A293C -> #20232A -->
     <SolidColorBrush x:Key="SurfaceBrush" Color="#181A1F" />
     <SolidColorBrush x:Key="SurfaceRaisedBrush" Color="#20232A" />
+    <SolidColorBrush x:Key="RaisedBrush" Color="#20232A" />
 
     <!-- Primary text: #EAF2FA -> #F1F2F4 -->
     <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F1F2F4" />
+    <SolidColorBrush x:Key="TextBrush" Color="#F1F2F4" />
 
     <!-- Secondary text: #A7B8CD -> #A3A9B5 -->
     <SolidColorBrush x:Key="TextSecondaryBrush" Color="#A3A9B5" />
+    <SolidColorBrush x:Key="SecondaryBrush" Color="#A3A9B5" />
 
     <!-- Accent: #7DD3FC -> #8C9EFF (periwinkle instead of sky blue) -->
     <SolidColorBrush x:Key="AccentBrush" Color="#8C9EFF" />
@@ -56,4 +61,28 @@
     <!-- Motion: 160-240ms controls, 240-320ms panel transitions -->
     <Duration x:Key="ControlAnimationDuration">0:0:0.200</Duration>
     <Duration x:Key="PanelAnimationDuration">0:0:0.280</Duration>
+
+    <!-- Common Converters -->
+    <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    <vm:InverseBooleanConverter x:Key="InverseBool" />
+
+    <!-- Capsule toggle button style (for mic/mute toggles) -->
+    <Style x:Key="CapsuleToggle" TargetType="Button">
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="MinWidth" Value="32" />
+        <Setter Property="Padding" Value="6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="{StaticResource CardCornerRadius}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Opacity" Value="0.85" /></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>
