@@ -53,6 +53,7 @@ public sealed class PhoneSession : IDisposable
     private MemoryStream? _buffer;
     private CancellationTokenSource? _processingCts;
     private int _utteranceGeneration;
+    private long _activeConnectionCursor;
     private int _sendInProgress;
     private bool _disposed;
 
@@ -298,6 +299,21 @@ public sealed class PhoneSession : IDisposable
 
     private void OnConnectionChanged(object? sender, PhoneConnectionEventArgs e)
     {
+        lock (_lock)
+        {
+            // The old socket can report its finally-block after a replacement connection has
+            // already been accepted. Never let that stale disconnect clear the new utterance.
+            if (e.Cursor > 0 && e.Cursor < _activeConnectionCursor)
+            {
+                return;
+            }
+
+            if (e.Cursor > 0)
+            {
+                _activeConnectionCursor = e.Cursor;
+            }
+        }
+
         lock (_lock)
         {
             // A reconnect abandons any half-captured utterance rather than splicing it onto

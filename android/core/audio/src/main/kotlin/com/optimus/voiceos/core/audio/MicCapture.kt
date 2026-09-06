@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -15,7 +16,10 @@ import kotlin.concurrent.thread
  * phone are already in the one format the rest of the system uses. Audio is streamed straight
  * out and never buffered to storage.
  */
-class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
+class MicCapture(
+    private val onPcm: (ByteArray, Int) -> Unit,
+    private val onSpeechStart: ((ByteArray) -> Unit)? = null
+) {
 
     private companion object {
         const val TAG = "MicCapture"
@@ -27,7 +31,16 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
 
     private val running = AtomicBoolean(false)
     private var record: AudioRecord? = null
+    private var echoCanceller: AcousticEchoCanceler? = null
     private var captureThread: Thread? = null
+    private val preRoll = PcmPreRollBuffer(SAMPLE_RATE, 300)
+    private val vad = VoiceActivityDetector()
+    @Volatile private var speechActive = false
+
+    var echoCancellationAvailable: Boolean = false
+        private set
+    var echoCancellationEnabled: Boolean = false
+        private set
 
     val isRecording: Boolean get() = running.get()
 
@@ -51,7 +64,9 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
 
         val r = try {
             AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                // VOICE_COMMUNICATION routes the record/playback pair through the platform
+                // communication path, which is required for AcousticEchoCanceler on Pixel.
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -69,14 +84,45 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
         }
 
         record = r
+        echoCancellationAvailable = AcousticEchoCanceler.isAvailable()
+        echoCancellationEnabled = false
+        if (echoCancellationAvailable) {
+            echoCanceller = try {
+                AcousticEchoCanceler.create(r.audioSessionId)?.also { effect ->
+                    effect.enabled = true
+                    echoCancellationEnabled = effect.enabled
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "AcousticEchoCanceler could not be attached", e)
+                null
+            }
+        }
+        preRoll.clear()
+        speechActive = false
         running.set(true)
-        r.startRecording()
+        try {
+            r.startRecording()
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "AudioRecord.startRecording failed", e)
+            echoCanceller?.release()
+            echoCanceller = null
+            r.release()
+            record = null
+            echoCancellationEnabled = false
+            running.set(false)
+            return false
+        }
 
         captureThread = thread(name = "mic-capture", isDaemon = true) {
             val buffer = ByteArray(CHUNK_BYTES)
             while (running.get()) {
                 val read = r.read(buffer, 0, buffer.size)
                 if (read > 0) {
+                    preRoll.append(buffer, read)
+                    if (!speechActive && vad.isSpeech(buffer, read)) {
+                        speechActive = true
+                        onSpeechStart?.invoke(preRoll.snapshot())
+                    }
                     onPcm(buffer, read)
                 } else if (read < 0) {
                     Log.e(TAG, "AudioRecord.read returned $read")
@@ -129,5 +175,8 @@ class MicCapture(private val onPcm: (ByteArray, Int) -> Unit) {
         }
 
         r?.release()
+        echoCanceller = null
+        echoCancellationEnabled = false
+        speechActive = false
     }
 }
