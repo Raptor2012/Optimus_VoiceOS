@@ -48,7 +48,8 @@ public sealed record RoutingDecision(
 public sealed record PlanTaskCard
 {
     public PlanTaskCard(string id, string title, string summary, IReadOnlyList<string> doneConditions,
-        IReadOnlyList<string>? dependsOn = null, string? owner = null)
+        IReadOnlyList<string>? dependsOn = null, string? owner = null, ExecutionRole? role = null,
+        IReadOnlyList<string>? ownershipKeys = null, ExecutionProvider? provider = null)
     {
         Id = id;
         Title = title;
@@ -56,6 +57,9 @@ public sealed record PlanTaskCard
         DoneConditions = doneConditions;
         DependsOn = dependsOn ?? Array.Empty<string>();
         Owner = owner;
+        Role = role;
+        OwnershipKeys = ownershipKeys ?? Array.Empty<string>();
+        Provider = provider;
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentException.ThrowIfNullOrWhiteSpace(summary);
@@ -68,6 +72,9 @@ public sealed record PlanTaskCard
     public IReadOnlyList<string> DoneConditions { get; }
     public IReadOnlyList<string> DependsOn { get; }
     public string? Owner { get; }
+    public ExecutionRole? Role { get; }
+    public IReadOnlyList<string> OwnershipKeys { get; }
+    public ExecutionProvider? Provider { get; }
 
     public bool IsExpanded { get; init; }
 }
