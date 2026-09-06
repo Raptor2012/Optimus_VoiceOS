@@ -71,6 +71,13 @@ public sealed class AgentCapacityViewModel : IDisposable
         return Math.Clamp(remaining, 0d, 100d);
     }
 
+    public void ResetTimers()
+    {
+        DateTimeOffset now = _clock();
+        foreach (ExecutionProvider provider in Providers.Keys) _windowStarted[provider] = now;
+        Refresh();
+    }
+
     /// <summary>Sets an elapsed window for one provider and refreshes the matching bar.</summary>
     public void SetElapsed(ExecutionProvider provider, TimeSpan elapsed)
     {

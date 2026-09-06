@@ -23,6 +23,12 @@ public sealed class PersonalSettings
     /// microphone hears the tool itself, so this must stay off until echo cancellation exists.
     /// </remarks>
     public bool BargeInEnabled { get; set; }
+    public string TtsVoice { get; set; } = "Default local voice";
+    public double TtsSpeed { get; set; } = 1.0;
+    public bool NarrationEnabled { get; set; } = true;
+    public bool StartExpanded { get; set; }
+    public string ToggleListeningHotkey { get; set; } = "Ctrl+Shift+Space";
+    public string ToggleCompanionHotkey { get; set; } = "Ctrl+Shift+O";
     public Dictionary<string, string> WindowTitles { get; set; } = new();
     public Dictionary<string, SavedVoiceTarget> Aliases { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

@@ -1,0 +1,14 @@
+<UserControl x:Class="Optimus.Shell.Controls.FluidInkOrb"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="48" Height="48"
+             SnapsToDevicePixels="True"
+             UseLayoutRounding="True">
+    <Grid>
+        <Image x:Name="InkSurface" Width="48" Height="48" Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality" />
+        <Ellipse x:Name="Halo" Width="44" Height="44" HorizontalAlignment="Center" VerticalAlignment="Center"
+                 Stroke="{StaticResource AccentBrush}" StrokeThickness="1" Opacity="0" />
+        <TextBlock x:Name="MicOffIndicator" Text="🔇" FontSize="13" HorizontalAlignment="Center"
+                   VerticalAlignment="Center" Visibility="Collapsed" />
+    </Grid>
+</UserControl>

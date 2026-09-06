@@ -17,6 +17,8 @@ public sealed partial class WidgetViewModel
     private bool _showDetails;
     private int _choosingDestination;
     private string? _requiredAliasTitle;
+    public PersonalSettings Preferences => _preferences;
+
     private static readonly System.Buffers.SearchValues<char> SentenceEnds = System.Buffers.SearchValues.Create(".!?\n");
 
     public bool CleanupEnabled
