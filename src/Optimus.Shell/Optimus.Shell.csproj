@@ -12,4 +12,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Optimus.Core.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
