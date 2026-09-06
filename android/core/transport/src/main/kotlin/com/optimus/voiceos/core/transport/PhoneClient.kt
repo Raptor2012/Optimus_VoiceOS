@@ -83,6 +83,7 @@ sealed interface PcEvent {
     data object StopApprovalCapture : PcEvent
     data object StartRedictationCapture : PcEvent
     data class DestinationSelected(val destinationId: String) : PcEvent
+    data class AgentUpdate(val text: String, val destinationId: String) : PcEvent
 }
 
 /**
@@ -291,6 +292,7 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                     onEvent(PcEvent.Projects(list))
                 }
                 "destinationSelected" -> onEvent(PcEvent.DestinationSelected(o.optString("destinationId")))
+                "agentUpdate" -> onEvent(PcEvent.AgentUpdate(o.optString("text"), o.optString("destinationId")))
                 else -> Unit
             }
         } catch (e: Exception) {
@@ -335,6 +337,17 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
             .put("mode", mode)
             .put("narrateToolsAndSkills", narrateToolsAndSkills)
     )
+
+    fun resolveApproval(sessionId: String, requestId: String, decisionId: String, feedback: String? = null) {
+        val obj = JSONObject().put("t", "resolveApproval")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("decisionId", decisionId)
+        if (!feedback.isNullOrBlank()) {
+            obj.put("feedback", feedback)
+        }
+        sendJson(obj)
+    }
 
     /**
      * Queues 16 kHz mono PCM16, exactly the format the PC pipeline expects.

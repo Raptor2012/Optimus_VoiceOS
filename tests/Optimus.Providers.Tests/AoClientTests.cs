@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Optimus.Providers;
@@ -15,15 +16,21 @@ public class AoClientTests
 {
     private sealed class MockHttpMessageHandler : HttpMessageHandler
     {
-        public Func<HttpRequestMessage, HttpResponseMessage> Handler { get; set; } =
-            _ => new HttpResponseMessage(HttpStatusCode.OK);
+        public Func<HttpRequestMessage, HttpResponseMessage>? Handler { get; set; }
+
+        public MockHttpMessageHandler() { }
+        public MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
+        {
+            Handler = handler;
+        }
 
         public List<HttpRequestMessage> RecordedRequests { get; } = new();
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RecordedRequests.Add(request);
-            return Task.FromResult(Handler(request));
+            var h = Handler ?? (_ => new HttpResponseMessage(HttpStatusCode.OK));
+            return Task.FromResult(h(request));
         }
     }
 
@@ -152,7 +159,6 @@ public class AoClientTests
             Handler = req =>
             {
                 Assert.Equal(HttpMethod.Post, req.Method);
-                Assert.Equal("/api/v1/sessions/optimus_voiceos-5/send", req.RequestUri!.AbsolutePath);
                 recordedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -163,8 +169,9 @@ public class AoClientTests
         using var httpClient = new HttpClient(mockHandler) { BaseAddress = new Uri("http://localhost:3001") };
         using var client = new AoClient("http://localhost:3001", httpClient);
 
-        bool ok = await client.SendSessionMessageAsync("optimus_voiceos-5", "Hello worker");
-        Assert.True(ok);
+        var resp = await client.SendSessionMessageAsync("optimus_voiceos-5", "Hello worker");
+        Assert.NotNull(resp);
+        Assert.True(resp.Ok);
         Assert.Contains("Hello worker", recordedBody);
     }
 
@@ -192,7 +199,8 @@ public class AoClientTests
         {
             Handler = req =>
             {
-                if (req.RequestUri!.AbsolutePath.Contains("/send"))
+                if (req.RequestUri!.AbsolutePath.Contains("send", StringComparison.OrdinalIgnoreCase) ||
+                    req.RequestUri.AbsolutePath.Contains("conversation", StringComparison.OrdinalIgnoreCase))
                 {
                     sentSession = req.RequestUri.AbsolutePath;
                     sentText = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -215,5 +223,159 @@ public class AoClientTests
         Assert.Equal(SendStatus.Sent, result.Status);
         Assert.Contains("Ship Slice 2 now", sentText);
         Assert.Contains("optimus_voiceos-5", sentSession);
+    }
+
+    [Fact]
+    public void ResolveBaseUrlFromRunningJson_ReturnsDefaultWhenRunningJsonMissing()
+    {
+        string baseUrl = AoClient.ResolveBaseUrlFromRunningJson();
+        Assert.StartsWith("http://127.0.0.1:", baseUrl, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetProjectsAsync_ParsesJsonList()
+    {
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            Assert.Equal(HttpMethod.Get, req.Method);
+            Assert.Equal("/api/v1/projects", req.RequestUri!.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"projects\":[{\"id\":\"proj-1\",\"name\":\"Optimus\",\"path\":\"C:/opt\"}]}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        var projects = await client.GetProjectsAsync();
+
+        Assert.Single(projects);
+        Assert.Equal("proj-1", projects[0].Id);
+        Assert.Equal("Optimus", projects[0].Name);
+    }
+
+    [Fact]
+    public async Task GetSessionsAsync_ParsesJsonList()
+    {
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            Assert.Equal(HttpMethod.Get, req.Method);
+            Assert.Equal("/api/v1/sessions", req.RequestUri!.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"sessions\":[{\"id\":\"sess-1\",\"projectId\":\"proj-1\",\"status\":\"running\",\"displayName\":\"Voice slice\"}]}",
+                    Encoding.UTF8,
+                    "application/json")
+            };
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        var sessions = await client.GetSessionsAsync();
+
+        Assert.Single(sessions);
+        Assert.Equal("sess-1", sessions[0].Id);
+        Assert.Equal("proj-1", sessions[0].ProjectId);
+        Assert.Equal("Voice slice", sessions[0].DisplayName);
+    }
+
+    [Fact]
+    public async Task SendSessionMessageAsync_PostsToConversationMessagesWithClientMessageId()
+    {
+        string? capturedBody = null;
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("/api/v1/sessions/sess-123/conversation/messages", req.RequestUri!.AbsolutePath);
+            capturedBody = req.Content!.ReadAsStringAsync().Result;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"ok\":true,\"sessionId\":\"sess-123\"}", Encoding.UTF8, "application/json")
+            };
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        var resp = await client.SendSessionMessageAsync("sess-123", "Write unit tests", clientMessageId: "msg-abc-123");
+
+        Assert.NotNull(resp);
+        Assert.True(resp.Ok);
+        Assert.NotNull(capturedBody);
+        using var doc = JsonDocument.Parse(capturedBody);
+        Assert.Equal("Write unit tests", doc.RootElement.GetProperty("text").GetString());
+        Assert.Equal("msg-abc-123", doc.RootElement.GetProperty("clientMessageId").GetString());
+    }
+
+    [Fact]
+    public async Task SendSessionMessageAsync_FallsBackToLegacySendOnNotFound()
+    {
+        int requestCount = 0;
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            requestCount++;
+            if (req.RequestUri!.AbsolutePath.Contains("conversation/messages", StringComparison.Ordinal))
+            {
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            }
+            if (req.RequestUri.AbsolutePath == "/api/v1/sessions/sess-123/send")
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"ok\":true,\"sessionId\":\"sess-123\"}", Encoding.UTF8, "application/json")
+                };
+            }
+            return new HttpResponseMessage(HttpStatusCode.BadRequest);
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        var resp = await client.SendSessionMessageAsync("sess-123", "Legacy send test");
+
+        Assert.NotNull(resp);
+        Assert.True(resp.Ok);
+        Assert.Equal(2, requestCount);
+    }
+
+    [Fact]
+    public async Task ResolveApprovalAsync_PostsDecisionId()
+    {
+        string? capturedBody = null;
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("/api/v1/sessions/sess-123/conversation/approvals/appr-456/resolve", req.RequestUri!.AbsolutePath);
+            capturedBody = req.Content!.ReadAsStringAsync().Result;
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        bool resolved = await client.ResolveApprovalAsync("sess-123", "appr-456", "approved");
+
+        Assert.True(resolved);
+        Assert.NotNull(capturedBody);
+        using var doc = JsonDocument.Parse(capturedBody);
+        Assert.Equal("approved", doc.RootElement.GetProperty("decisionId").GetString());
+    }
+
+    [Fact]
+    public async Task InterruptAsync_PostsInterrupt()
+    {
+        var mock = new MockHttpMessageHandler(req =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("/api/v1/sessions/sess-123/conversation/interrupt", req.RequestUri!.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+
+        using var httpClient = new HttpClient(mock) { BaseAddress = new Uri("http://127.0.0.1:3001") };
+        using var client = new AoClient("http://127.0.0.1:3001", httpClient);
+        bool interrupted = await client.InterruptAsync("sess-123");
+
+        Assert.True(interrupted);
     }
 }

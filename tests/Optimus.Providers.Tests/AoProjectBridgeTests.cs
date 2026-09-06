@@ -36,11 +36,23 @@ public class AoProjectBridgeTests
         public Task<AoSession?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default) =>
             Task.FromResult(Sessions.Find(s => s.Id == sessionId));
 
-        public Task<IReadOnlyList<AoConversationMessage>> GetSessionConversationAsync(string sessionId, CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<AoConversationMessage>>(Array.Empty<AoConversationMessage>());
+        public Task<AoConversationResponse?> GetSessionConversationAsync(string sessionId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<AoConversationResponse?>(null);
 
-        public Task<bool> SendSessionMessageAsync(string sessionId, string message, CancellationToken cancellationToken = default) =>
+        public Task<AoSendMessageResponse?> SendSessionMessageAsync(string sessionId, string message, string? clientMessageId = null, CancellationToken cancellationToken = default) =>
+            Task.FromResult<AoSendMessageResponse?>(new AoSendMessageResponse(Ok: true, SessionId: sessionId));
+
+        public Task<bool> ResolveApprovalAsync(string sessionId, string requestId, string decisionId, CancellationToken cancellationToken = default) =>
             Task.FromResult(true);
+
+        public Task<bool> InterruptAsync(string sessionId, CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
+
+        public async IAsyncEnumerable<AoCdcEvent> StreamEventsAsync(long? afterSeq = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     [Fact]

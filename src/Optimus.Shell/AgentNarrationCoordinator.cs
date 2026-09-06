@@ -56,14 +56,22 @@ public sealed class AgentNarrationCoordinator : IDisposable
     public void Start(IDestinationAdapter adapter, bool speakOnPhone, string confirmedPrompt)
     {
         ArgumentNullException.ThrowIfNull(adapter);
-        if (adapter is not WindowsAppAdapter windows)
+        IAgentObserver observer;
+        if (adapter is IObservableDestinationAdapter observable)
         {
-            throw new InvalidOperationException("Narration requires an exact Windows destination.");
+            observer = observable.CreateObserver();
+        }
+        else if (adapter is WindowsAppAdapter windows)
+        {
+            observer = windows.CreateObserver();
+        }
+        else
+        {
+            throw new InvalidOperationException($"Narration is not supported for {adapter.DisplayName}.");
         }
 
         Cancel();
         if (_muted) return;
-        var observer = windows.CreateObserver();
 
         var cts = new CancellationTokenSource();
         long generation = _phone != null
@@ -101,7 +109,7 @@ public sealed class AgentNarrationCoordinator : IDisposable
     }
 
     private async Task RunAsync(
-        AgentWindowObserver observer,
+        IAgentObserver observer,
         string destinationName,
         bool speakOnPhone,
         string confirmedPrompt,

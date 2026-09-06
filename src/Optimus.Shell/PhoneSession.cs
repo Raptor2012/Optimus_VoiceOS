@@ -16,7 +16,7 @@ using Optimus.Core.Voice;
 /// Bridges the phone endpoint to the existing STT and cleanup pipeline.
 /// </summary>
 /// <remarks>
-/// The phone captures; the PC transcribes, cleans and (in a later slice) sends. Audio arrives as
+/// The phone captures; the PC transcribes, cleans and sends. Audio arrives as
 /// 16 kHz mono PCM16 frames, is buffered in memory for the length of one utterance, and is
 /// discarded as soon as the draft exists. Nothing is written to disk.
 /// </remarks>
@@ -26,6 +26,7 @@ public sealed class PhoneSession : IDisposable
     private readonly VoicePipeline? _pipeline;
     private readonly DestinationRegistry? _destinations;
     private readonly AoProjectBridge? _aoBridge;
+    private readonly IAoClient? _aoClient;
     private readonly Action<string, string, string>? _onDraft;
     private readonly Action<string>? _onStatus;
     private readonly Action? _onCancel;
@@ -68,12 +69,14 @@ public sealed class PhoneSession : IDisposable
         Action<string, string, string, string?>? onDraftWithDestination = null,
         Action<string>? onDestinationSelected = null,
         Action<string>? onDraftEdited = null,
-        AoProjectBridge? aoBridge = null)
+        AoProjectBridge? aoBridge = null,
+        IAoClient? aoClient = null)
     {
         _endpoint = endpoint ?? throw new ArgumentNullException(nameof(endpoint));
         _pipeline = pipeline;
         _destinations = destinations;
-        _aoBridge = aoBridge;
+        _aoClient = aoClient;
+        _aoBridge = aoBridge ?? (aoClient != null ? new AoProjectBridge(aoClient) : null);
         _onDraft = onDraft;
         _onStatus = onStatus;
         _onCancel = onCancel;
@@ -94,6 +97,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CancelRequested += OnCancelRequested;
         _endpoint.DestinationSelected += OnDestinationSelected;
         _endpoint.DraftEdited += OnDraftEdited;
+        _endpoint.ApprovalResolved += OnApprovalResolved;
     }
 
     private void OnDraftEdited(object? sender, string text) =>
@@ -123,22 +127,34 @@ public sealed class PhoneSession : IDisposable
     /// <summary>Pushes the live AO projects and sessions to the phone.</summary>
     public async Task PushProjectsAsync(CancellationToken cancellationToken = default)
     {
-        if (_aoBridge == null)
+        if (_aoBridge != null)
         {
-            return;
-        }
-
-        try
-        {
-            var cards = await _aoBridge.GetLiveProjectCardsAsync(cancellationToken).ConfigureAwait(false);
-            if (cards.Count > 0)
+            try
             {
-                _endpoint.SendProjects(cards);
+                var cards = await _aoBridge.GetLiveProjectCardsAsync(cancellationToken).ConfigureAwait(false);
+                if (cards.Count > 0)
+                {
+                    _endpoint.SendProjects(cards);
+                    return;
+                }
+            }
+            catch
+            {
+                // Fall back to simple projects if bridge fails
             }
         }
-        catch
+
+        if (_aoClient != null)
         {
-            // Daemon might not be running or reachable
+            try
+            {
+                var projects = await _aoClient.GetProjectsAsync(cancellationToken).ConfigureAwait(false);
+                _endpoint.SendProjects(projects);
+            }
+            catch
+            {
+                // Daemon might not be running or reachable
+            }
         }
     }
 
@@ -462,6 +478,19 @@ public sealed class PhoneSession : IDisposable
         }, token);
     }
 
+    private void OnApprovalResolved(object? sender, PhoneApprovalResolutionEventArgs e)
+    {
+        if (_aoClient == null) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _aoClient.ResolveApprovalAsync(e.SessionId, e.RequestId, e.DecisionId).ConfigureAwait(false);
+            }
+            catch { }
+        });
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -481,6 +510,7 @@ public sealed class PhoneSession : IDisposable
         _endpoint.CancelRequested -= OnCancelRequested;
         _endpoint.DestinationSelected -= OnDestinationSelected;
         _endpoint.DraftEdited -= OnDraftEdited;
+        _endpoint.ApprovalResolved -= OnApprovalResolved;
 
         lock (_lock)
         {

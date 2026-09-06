@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.dp
 import com.optimus.voiceos.ui.theme.OptimusTokens
 import kotlin.math.sin
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+
 /**
  * Visual states of the voice interaction matching the PC WPF widget states.
  */
@@ -49,12 +52,17 @@ enum class VoiceOrbState {
  *
  * Renders an expressive, reactive robotic core with state-dependent ripples, rotating
  * orbital rings, and glowing gradients.
+ *
+ * Supports both hold-to-talk (press to start, release to stop) and tap-to-toggle.
  */
 @Composable
 fun VoiceOrb(
     state: VoiceOrbState,
     modifier: Modifier = Modifier,
     size: Dp = 140.dp,
+    isCapturing: Boolean = false,
+    onStartCapture: (() -> Unit)? = null,
+    onStopCapture: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "VoiceOrbTransition")
@@ -120,19 +128,47 @@ fun VoiceOrb(
 
     val interactionSource = remember { MutableInteractionSource() }
 
+    val touchModifier = when {
+        onStartCapture != null && onStopCapture != null -> {
+            Modifier.pointerInput(isCapturing, onStartCapture, onStopCapture) {
+                detectTapGestures(
+                    onPress = {
+                        val downTime = System.currentTimeMillis()
+                        if (isCapturing) {
+                            onStopCapture()
+                            tryAwaitRelease()
+                        } else {
+                            onStartCapture()
+                            val released = tryAwaitRelease()
+                            val elapsed = System.currentTimeMillis() - downTime
+                            if (released && elapsed > 300) {
+                                // User held down to talk and released
+                                onStopCapture()
+                            } else if (!released) {
+                                // Cancelled / dragged off
+                                onStopCapture()
+                            }
+                            // Otherwise user quick-tapped (<= 300ms): keep capturing active for hands-free dictation
+                        }
+                    }
+                )
+            }
+        }
+        onClick != null -> {
+            Modifier.clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
+        }
+        else -> Modifier
+    }
+
     Box(
         modifier = modifier
             .defaultMinSize(minWidth = OptimusTokens.MinTouchTarget, minHeight = OptimusTokens.MinTouchTarget)
             .size(size)
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                        onClick = onClick
-                    )
-                } else Modifier
-            ),
+            .then(touchModifier),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.size(size)) {

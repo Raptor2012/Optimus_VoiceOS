@@ -18,7 +18,13 @@ public interface IAoClient
 
     Task<AoSession?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<AoConversationMessage>> GetSessionConversationAsync(string sessionId, CancellationToken cancellationToken = default);
+    Task<AoConversationResponse?> GetSessionConversationAsync(string sessionId, CancellationToken cancellationToken = default);
 
-    Task<bool> SendSessionMessageAsync(string sessionId, string message, CancellationToken cancellationToken = default);
+    Task<AoSendMessageResponse?> SendSessionMessageAsync(string sessionId, string message, string? clientMessageId = null, CancellationToken cancellationToken = default);
+
+    Task<bool> ResolveApprovalAsync(string sessionId, string requestId, string decisionId, CancellationToken cancellationToken = default);
+
+    Task<bool> InterruptAsync(string sessionId, CancellationToken cancellationToken = default);
+
+    IAsyncEnumerable<AoCdcEvent> StreamEventsAsync(long? afterSeq = null, CancellationToken cancellationToken = default);
 }

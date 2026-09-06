@@ -86,7 +86,9 @@ fun TalkUiState.toVoiceOrbState(): VoiceOrbState {
         sendSummary.startsWith("Sent to") -> VoiceOrbState.Sent
         status.contains("Speaking", ignoreCase = true) -> VoiceOrbState.ReadingDraft
         status.contains("approval", ignoreCase = true) -> VoiceOrbState.AwaitingApproval
-        status.contains("Processing", ignoreCase = true) -> VoiceOrbState.Processing
+        status.contains("Processing", ignoreCase = true) ||
+            status.contains("Transcribing", ignoreCase = true) ||
+            status.contains("waiting for draft", ignoreCase = true) -> VoiceOrbState.Processing
         status.contains("new draft", ignoreCase = true) -> VoiceOrbState.Redictating
         hasDraft -> VoiceOrbState.Confirm
         connected -> VoiceOrbState.Idle
@@ -275,17 +277,19 @@ fun TalkScreen(
             VoiceOrb(
                 state = state.toVoiceOrbState(),
                 size = 148.dp,
-                onClick = {
-                    if (state.capturing) onStopCapture() else onStartCapture()
-                }
+                isCapturing = state.capturing,
+                onStartCapture = onStartCapture,
+                onStopCapture = onStopCapture
             )
 
             // Current voice status prompt
             Text(
                 text = when {
-                    state.capturing -> "Recording — Tap orb to stop"
-                    state.status.isNotBlank() -> state.status
-                    state.connected -> "Tap orb or hold to speak"
+                    state.capturing -> "Recording — Release or tap to stop"
+                    state.status.isNotBlank() &&
+                        !state.status.equals("Listening...", ignoreCase = true) &&
+                        !state.status.equals("Recording...", ignoreCase = true) -> state.status
+                    state.connected -> "Hold to speak, or tap to toggle"
                     else -> "Connect to PC to talk"
                 },
                 fontSize = 14.sp,

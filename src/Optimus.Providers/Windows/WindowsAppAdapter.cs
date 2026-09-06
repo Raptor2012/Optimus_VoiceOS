@@ -28,7 +28,7 @@ using System.Windows.Automation;
 /// "the agent replied".
 /// </para>
 /// </remarks>
-public sealed class WindowsAppAdapter : IDestinationAdapter
+public sealed class WindowsAppAdapter : IDestinationAdapter, IObservableDestinationAdapter
 {
     /// <summary>Characters per SendInput batch; large batches get dropped by some apps.</summary>
     private const int ChunkSize = 200;
@@ -170,6 +170,8 @@ public sealed class WindowsAppAdapter : IDestinationAdapter
 
         return new AgentWindowObserver(bound);
     }
+
+    IAgentObserver IObservableDestinationAdapter.CreateObserver() => CreateObserver();
 
     public async Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default)
     {

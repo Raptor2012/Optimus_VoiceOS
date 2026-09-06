@@ -40,7 +40,7 @@ public interface IWindowTextSource
 /// Observes only one explicitly bound Windows window and emits text added since the last poll.
 /// It reports visible UI text only; it cannot access a model's private reasoning.
 /// </summary>
-public sealed class AgentWindowObserver
+public sealed class AgentWindowObserver : IAgentObserver
 {
     private readonly WindowCandidate _window;
     private readonly IWindowTextSource _textSource;

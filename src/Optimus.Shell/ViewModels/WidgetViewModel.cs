@@ -24,6 +24,7 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
 {
     private readonly Action<Action> _dispatchAction;
     private PushToTalkController? _controller;
+    private DestinationRegistry? _registry;
     private VoicePipeline? _pipeline;
     private CancellationTokenSource? _processingCts;
     private int _utteranceGeneration;
@@ -566,6 +567,7 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     public void AttachDestinations(DestinationRegistry registry)
     {
         ArgumentNullException.ThrowIfNull(registry);
+        _registry = registry;
 
         Destinations.Clear();
         var aliases = new List<VoiceDestinationAlias>();
@@ -1004,9 +1006,29 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     /// <summary>Re-probes every destination and refreshes the picker.</summary>
     public void RefreshDestinations()
     {
-        foreach (DestinationOption option in Destinations)
+        if (_registry != null)
         {
-            option.Status = option.Adapter.Probe();
+            var probed = _registry.ProbeAll().ToList();
+            var existingMap = Destinations.ToDictionary(d => d.DestinationId, StringComparer.OrdinalIgnoreCase);
+
+            foreach ((IDestinationAdapter adapter, DestinationStatus status) in probed)
+            {
+                if (existingMap.TryGetValue(adapter.DestinationId, out DestinationOption? existing))
+                {
+                    existing.Status = status;
+                }
+                else
+                {
+                    Destinations.Add(new DestinationOption(adapter, status));
+                }
+            }
+        }
+        else
+        {
+            foreach (DestinationOption option in Destinations)
+            {
+                option.Status = option.Adapter.Probe();
+            }
         }
 
         if (SelectedDestination != null)

@@ -110,3 +110,23 @@ public interface IDestinationAdapter
     /// </summary>
     Task<SendResult> SendAsync(ConfirmedDraft draft, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Observes agent activity and emits visible updates for narration.
+/// </summary>
+public interface IAgentObserver
+{
+    int CapturedNodeCount { get; }
+
+    IReadOnlyList<VisibleAgentUpdate> Poll();
+
+    IAsyncEnumerable<VisibleAgentUpdate> ObserveAsync(TimeSpan pollInterval, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// A destination adapter that can be observed for visible agent narration.
+/// </summary>
+public interface IObservableDestinationAdapter : IDestinationAdapter
+{
+    IAgentObserver CreateObserver();
+}
