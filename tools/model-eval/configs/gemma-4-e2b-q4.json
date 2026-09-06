@@ -1,0 +1,12 @@
+{
+  "id": "gemma-4-e2b-q4",
+  "displayName": "Gemma 4 E2B Q4 baseline",
+  "modelFile": "gemma-4-e2b/gemma-4-E2B_q4_0-it.gguf",
+  "architecture": "gemma4",
+  "quantization": "Q4_0",
+  "contextWindow": 4096,
+  "gpuLayers": 99,
+  "chatFormat": "jinja",
+  "visionCapable": false,
+  "llamaServerArguments": ["--jinja", "--reasoning-budget", "0", "-ngl", "99"]
+}

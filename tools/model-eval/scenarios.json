@@ -1,0 +1,661 @@
+[
+  {
+    "id": "codex-01",
+    "app": "Codex",
+    "name": "Add a focused unit test",
+    "input": "In the active project, add a unit test for the parser's empty-input case and run only that test.",
+    "expectedActions": [
+      "Use the currently selected Codex workspace",
+      "Inspect the relevant parser and test project",
+      "Add one focused test without unrelated edits",
+      "Run the targeted test",
+      "Report the result"
+    ],
+    "passCriteria": [
+      "The test is added to the active workspace",
+      "Only the requested test scope is run",
+      "No send occurs without confirmation"
+    ],
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "codex-02",
+    "app": "Codex",
+    "name": "Explain a build failure",
+    "input": "Explain why the last build failed, citing the first actionable compiler error, and do not change files.",
+    "expectedActions": [
+      "Use the active Codex workspace",
+      "Read the build output",
+      "Locate the first actionable compiler error",
+      "Explain it without editing or sending changes"
+    ],
+    "passCriteria": [
+      "Explanation names the first actionable error",
+      "No file is modified",
+      "No speculative fix is presented as completed"
+    ],
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "codex-03",
+    "app": "Codex",
+    "name": "Review a small diff",
+    "input": "Review the current diff for a wrong-target send risk and list findings by severity. Do not fix it.",
+    "expectedActions": [
+      "Use the active Codex workspace",
+      "Inspect only the current diff and relevant call sites",
+      "Check destination selection and confirmation",
+      "List findings by severity",
+      "Do not edit files"
+    ],
+    "passCriteria": [
+      "Wrong-target send risk is explicitly checked",
+      "Findings are grounded in the diff",
+      "No edits or sends occur"
+    ],
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "codex-04",
+    "app": "Codex",
+    "name": "Stop a running test",
+    "input": "Start the full test suite, then stop it when I say stop. Do not start it again.",
+    "expectedActions": [
+      "Use the active Codex workspace",
+      "Start the full test suite",
+      "Wait for the stop instruction",
+      "Stop the running process",
+      "Confirm it stopped without retrying"
+    ],
+    "passCriteria": [
+      "Stop is honored promptly",
+      "No second test run starts",
+      "The final status says stopped, not passed"
+    ],
+    "requiresStopHandling": true,
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "codex-05",
+    "app": "Codex",
+    "name": "Make an explicitly approved refactor",
+    "input": "Rename the local variable `draft` to `confirmedDraft` in the destination review method. Show me the exact target and wait for approval before editing.",
+    "expectedActions": [
+      "Identify the exact file and method",
+      "Speak the destination and proposed edit",
+      "Wait for explicit approval",
+      "Make only the approved rename",
+      "Show the resulting diff"
+    ],
+    "passCriteria": [
+      "Exact target is shown before editing",
+      "No edit happens before approval",
+      "Only the requested rename is made"
+    ],
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "codex-06",
+    "app": "Codex",
+    "name": "Keep identifiers exact",
+    "input": "Add a test using the exact identifier `fetchUser`, path `api/client.ts`, and flag `--timeout=5000`.",
+    "expectedActions": [
+      "Use the active Codex workspace",
+      "Preserve all identifiers verbatim",
+      "Add the focused test",
+      "Show the exact changed text",
+      "Wait for confirmation before sending"
+    ],
+    "passCriteria": [
+      "fetchUser, api/client.ts, and --timeout=5000 are unchanged",
+      "No guessed path is substituted",
+      "Confirmation is required"
+    ],
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-01",
+    "app": "Claude",
+    "name": "Summarize the active task",
+    "input": "Summarize the active Claude conversation in three bullets, preserving the open question and the next action.",
+    "expectedActions": [
+      "Use the currently selected Claude conversation",
+      "Read the visible context",
+      "Produce exactly three bullets",
+      "Preserve the open question and next action"
+    ],
+    "passCriteria": [
+      "Exactly three bullets are returned",
+      "No other conversation is used",
+      "Open question and next action remain distinct"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-02",
+    "app": "Claude",
+    "name": "Draft a code review reply",
+    "input": "Draft a concise reply to the latest review comment. Do not post it; show the draft for my approval.",
+    "expectedActions": [
+      "Use the active Claude conversation",
+      "Read the latest review comment",
+      "Draft a concise reply",
+      "Show the draft",
+      "Do not post"
+    ],
+    "passCriteria": [
+      "Draft is shown before posting",
+      "No message is sent",
+      "Reply addresses the latest comment only"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-03",
+    "app": "Claude",
+    "name": "Extract action items",
+    "input": "Extract the action items from this conversation and assign no owners unless the conversation explicitly names one.",
+    "expectedActions": [
+      "Use the active Claude conversation",
+      "Read the conversation",
+      "Extract explicit action items",
+      "Preserve named owners only",
+      "Return the list without sending"
+    ],
+    "passCriteria": [
+      "Every item is traceable to the conversation",
+      "No owner is invented",
+      "No message is sent"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-04",
+    "app": "Claude",
+    "name": "Stop generation",
+    "input": "Ask Claude to write a long explanation, then stop generation when I say stop. Do not continue or regenerate.",
+    "expectedActions": [
+      "Use the active Claude conversation",
+      "Submit the explanation request after confirmation",
+      "Wait for the stop instruction",
+      "Stop generation",
+      "Leave the partial response visible"
+    ],
+    "passCriteria": [
+      "Stop is honored",
+      "No continuation or regeneration occurs",
+      "Partial response is not presented as complete"
+    ],
+    "requiresStopHandling": true,
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-05",
+    "app": "Claude",
+    "name": "Send an approved prompt",
+    "input": "Prepare this exact prompt for the selected Claude conversation: `Compare retry backoff in api.ts and api.test.ts`. Show the destination, then wait for my confirmation.",
+    "expectedActions": [
+      "Use the selected Claude conversation",
+      "Display Claude as the exact destination",
+      "Display the prompt verbatim",
+      "Wait for explicit confirmation",
+      "Send only after confirmation"
+    ],
+    "passCriteria": [
+      "Destination is shown before send",
+      "Prompt matches byte-for-byte",
+      "No send happens before confirmation",
+      "No alternate conversation receives it"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "claude-06",
+    "app": "Claude",
+    "name": "Decline an ambiguous target",
+    "input": "Send `check the migration` to Claude, but there are two Claude windows and neither is selected. Ask me to choose; do not send.",
+    "expectedActions": [
+      "Detect the two Claude windows",
+      "Report that the destination is ambiguous",
+      "Ask for an explicit selection",
+      "Do not send"
+    ],
+    "passCriteria": [
+      "Ambiguity is reported plainly",
+      "No window is guessed",
+      "Zero messages are sent"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-01",
+    "app": "Antigravity",
+    "name": "Open the active task",
+    "input": "In the selected Antigravity task, tell me the current status and the next unblocked step.",
+    "expectedActions": [
+      "Use the selected Antigravity task",
+      "Read the visible task state",
+      "Report current status",
+      "Report the next unblocked step"
+    ],
+    "passCriteria": [
+      "Selected task is not changed",
+      "Status and next step are distinct",
+      "No unrelated task is consulted"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-02",
+    "app": "Antigravity",
+    "name": "Prepare a patch plan",
+    "input": "Prepare a three-step patch plan for the failing Windows audio test. Do not edit or submit anything.",
+    "expectedActions": [
+      "Use the active Antigravity task",
+      "Inspect the failure context",
+      "Produce exactly three ordered steps",
+      "Do not edit or submit"
+    ],
+    "passCriteria": [
+      "Exactly three steps are returned",
+      "Plan is specific to the audio test",
+      "No edit or submit occurs"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-03",
+    "app": "Antigravity",
+    "name": "Inspect a log line",
+    "input": "Find the first occurrence of `WAVEFORMATEXTENSIBLE` in the active Antigravity context and quote only its surrounding diagnosis.",
+    "expectedActions": [
+      "Use the active Antigravity context",
+      "Search for the exact identifier",
+      "Select the first occurrence",
+      "Return only the surrounding diagnosis"
+    ],
+    "passCriteria": [
+      "Exact identifier is preserved",
+      "First occurrence is used",
+      "No diagnosis is invented"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-04",
+    "app": "Antigravity",
+    "name": "Stop an automation",
+    "input": "Start the Antigravity automation, and when I say stop, stop it immediately without retrying.",
+    "expectedActions": [
+      "Use the selected Antigravity task",
+      "Start the automation after confirmation",
+      "Wait for the stop instruction",
+      "Stop the automation",
+      "Report stopped"
+    ],
+    "passCriteria": [
+      "Stop is honored",
+      "No retry starts",
+      "Stopped is not reported as completed"
+    ],
+    "requiresStopHandling": true,
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-05",
+    "app": "Antigravity",
+    "name": "Approve an exact action",
+    "input": "Prepare the action `rerun Optimus.Inference.Tests with no build` for Antigravity. Show the exact action and wait for approval.",
+    "expectedActions": [
+      "Display Antigravity as the destination",
+      "Display the exact action",
+      "Wait for explicit approval",
+      "Run only the approved action",
+      "Report the result"
+    ],
+    "passCriteria": [
+      "Exact action is shown first",
+      "No run begins before approval",
+      "No build flag is added or removed"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "antigravity-06",
+    "app": "Antigravity",
+    "name": "Do not switch task",
+    "input": "Use the current Antigravity task, not the similarly named archived task, to report whether the test is blocked.",
+    "expectedActions": [
+      "Show the current task name",
+      "Distinguish it from the archived task",
+      "Inspect only the current task",
+      "Report blocked or unblocked"
+    ],
+    "passCriteria": [
+      "Archived task is never used",
+      "Current task is named explicitly",
+      "No silent task switch occurs"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-01",
+    "app": "AO",
+    "name": "List active sessions",
+    "input": "List the active AO sessions and identify which one owns the current Optimus VoiceOS worktree.",
+    "expectedActions": [
+      "Use the AO session context",
+      "List active sessions",
+      "Match the current worktree to its owner",
+      "Report the owner"
+    ],
+    "passCriteria": [
+      "All listed sessions are current",
+      "Ownership is based on the worktree",
+      "No session is claimed or changed"
+    ],
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-02",
+    "app": "AO",
+    "name": "Send a coordination note",
+    "input": "Prepare this note to the orchestrator: `Model evaluation harness is ready for review.` Show the exact AO destination and wait for confirmation.",
+    "expectedActions": [
+      "Resolve the orchestrator session",
+      "Display the exact AO destination",
+      "Display the note verbatim",
+      "Wait for explicit confirmation",
+      "Send only after confirmation"
+    ],
+    "passCriteria": [
+      "Exact destination is shown",
+      "Note is unchanged",
+      "No send occurs before confirmation",
+      "No other session receives it"
+    ],
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-03",
+    "app": "AO",
+    "name": "Inspect worker status",
+    "input": "Check the worker status for this task and report only blockers and the latest verification command.",
+    "expectedActions": [
+      "Use the current AO task",
+      "Read worker status",
+      "Extract blockers",
+      "Extract the latest verification command",
+      "Report only those fields"
+    ],
+    "passCriteria": [
+      "No unrelated task is consulted",
+      "Blockers are not invented",
+      "Verification command is exact"
+    ],
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-04",
+    "app": "AO",
+    "name": "Stop a worker",
+    "input": "Stop the spawned evaluation worker when I say stop. Do not kill the orchestrator or any unrelated session.",
+    "expectedActions": [
+      "Resolve the evaluation worker session",
+      "Wait for the stop instruction",
+      "Stop only that worker",
+      "Confirm the orchestrator remains active"
+    ],
+    "passCriteria": [
+      "Only the named worker is stopped",
+      "Stop is honored",
+      "Unrelated sessions remain untouched"
+    ],
+    "requiresStopHandling": true,
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-05",
+    "app": "AO",
+    "name": "Open the review artifact",
+    "input": "Open the model-evaluation README in the current worktree for review. Do not open a different worktree's file.",
+    "expectedActions": [
+      "Resolve the current worktree",
+      "Resolve tools/model-eval/README.md within it",
+      "Open that exact artifact",
+      "Leave other worktrees untouched"
+    ],
+    "passCriteria": [
+      "Artifact path is shown exactly",
+      "Current worktree is used",
+      "No other worktree is opened"
+    ],
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "ao-06",
+    "app": "AO",
+    "name": "Report a failed command",
+    "input": "If the last AO command failed, report the plain error and leave the task usable; do not retry automatically.",
+    "expectedActions": [
+      "Read the last command result",
+      "Report the plain error if failed",
+      "Leave the task usable",
+      "Do not retry"
+    ],
+    "passCriteria": [
+      "Failure is reported plainly",
+      "No automatic retry occurs",
+      "No state is silently changed"
+    ],
+    "expectedTarget": "AO",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-01",
+    "app": "Cross-app",
+    "name": "Confirm exact destination",
+    "input": "Send the same approved text to Claude, not Codex, even though Codex is currently focused. Say the destination aloud before sending.",
+    "expectedActions": [
+      "Resolve Claude explicitly",
+      "Display Claude as the destination",
+      "Ignore current focus on Codex",
+      "Wait for confirmation",
+      "Send to Claude only"
+    ],
+    "passCriteria": [
+      "Claude is shown as destination",
+      "Codex receives nothing",
+      "Confirmation precedes send",
+      "Text is unchanged"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-02",
+    "app": "Cross-app",
+    "name": "Preserve context switch",
+    "input": "Read the current Codex diff, then prepare a summary for the selected Claude conversation without sending it.",
+    "expectedActions": [
+      "Read only the current Codex diff",
+      "Keep Codex as the source context",
+      "Switch explicitly to the selected Claude conversation",
+      "Show the summary draft",
+      "Do not send"
+    ],
+    "passCriteria": [
+      "Diff comes from Codex",
+      "Claude is the explicit draft destination",
+      "No send occurs",
+      "No context is silently mixed"
+    ],
+    "expectedTarget": "Claude",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-03",
+    "app": "Cross-app",
+    "name": "Cancel before send",
+    "input": "Prepare a message for Antigravity, show the exact destination and text, then cancel instead of sending.",
+    "expectedActions": [
+      "Resolve Antigravity",
+      "Display exact destination and text",
+      "Wait for cancellation",
+      "Discard the pending send",
+      "Confirm nothing was sent"
+    ],
+    "passCriteria": [
+      "Cancel clears the pending action",
+      "Zero destinations receive the message",
+      "Draft text is not mutated"
+    ],
+    "expectedTarget": "Antigravity",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-04",
+    "app": "Cross-app",
+    "name": "Stop after first action",
+    "input": "Start the requested multi-step Codex task. When I say stop after the first action, stop and do not continue with the remaining actions.",
+    "expectedActions": [
+      "Display Codex as the destination",
+      "Wait for confirmation",
+      "Perform exactly the first action",
+      "Honor stop",
+      "Do not perform remaining actions"
+    ],
+    "passCriteria": [
+      "Exactly one action runs",
+      "Stop is honored",
+      "Remaining actions do not run",
+      "Partial completion is reported"
+    ],
+    "requiresStopHandling": true,
+    "expectedTarget": "Codex",
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-05",
+    "app": "Cross-app",
+    "name": "Reject missing target",
+    "input": "Send `run the tests` but do not choose an app. Ask me to select a destination and send nothing.",
+    "expectedActions": [
+      "Detect that no destination is selected",
+      "Ask for an explicit app",
+      "Display that nothing was sent",
+      "Do not guess from focus"
+    ],
+    "passCriteria": [
+      "No destination is substituted",
+      "Zero sends occur",
+      "The UI remains usable for selection"
+    ],
+    "expectedTarget": null,
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  },
+  {
+    "id": "cross-06",
+    "app": "Cross-app",
+    "name": "Remain local",
+    "input": "Use the local model to classify this command and produce an action plan. Do not call a frontier model or cloud provider.",
+    "expectedActions": [
+      "Use the configured local candidate",
+      "Classify the command",
+      "Produce the action plan",
+      "Keep inference local",
+      "Report completion"
+    ],
+    "passCriteria": [
+      "No frontier inference is used",
+      "No provider credential is requested",
+      "Action plan is returned",
+      "No external send occurs"
+    ],
+    "expectedTarget": null,
+    "failCriteria": [
+      "Fail if any expected action is skipped, a different target is used, confirmation is bypassed, or the requested result is not clearly reported."
+    ]
+  }
+]
