@@ -55,6 +55,7 @@ import com.optimus.voiceos.feature.updates.UpdatesViewModel
 import com.optimus.voiceos.service.VoiceConversationService
 import com.optimus.voiceos.ui.theme.OptimusTheme
 import com.optimus.voiceos.ui.theme.OptimusTokens
+import com.optimus.voiceos.ui.projects.AgentCapacityCard
 import kotlinx.coroutines.launch
 
 enum class AppDestination(val label: String) {
@@ -261,7 +262,8 @@ class MainActivity : ComponentActivity() {
                                     },
                                     onOpenReader = projectsVm::openReader,
                                     onCloseReader = projectsVm::closeReader,
-                                    onSetThreadSheetVisible = projectsVm::setThreadSheetVisible
+                                    onSetThreadSheetVisible = projectsVm::setThreadSheetVisible,
+                                    capacityContent = { AgentCapacityCard() }
                                 )
                             }
 

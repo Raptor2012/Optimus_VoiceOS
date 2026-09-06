@@ -12,6 +12,7 @@ using Optimus.Shell.ViewModels;
 public partial class MainWindow : Window
 {
     public WidgetViewModel ViewModel { get; }
+    public AgentCapacityViewModel CapacityViewModel { get; }
 
     private static readonly string PositionFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -31,6 +32,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        CapacityViewModel = new AgentCapacityViewModel();
+        AgentCapacity.DataContext = CapacityViewModel;
         DataContext = ViewModel;
 
         Loaded += OnLoaded;
@@ -151,6 +154,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        CapacityViewModel.Dispose();
         base.OnClosed(e);
     }
 }
