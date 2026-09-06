@@ -156,6 +156,24 @@ public sealed class ExecutionPolicyTests
     }
 
     [Fact]
+    public void Coordinator_RejectsTasksThatDoNotMatchApprovedCardOwnership()
+    {
+        var plans = new PlanApprovalService();
+        ExecutionPlanRevision plan = plans.Create("Objective", "Approach", [
+            new PlanTaskCard("task", "Task", "Summary", ["Done"], ownershipKeys: ["approved-area"])
+        ], "plan");
+        var scheduler = new ExecutionScheduler();
+        var coordinator = new ExecutionPolicyCoordinator(plans, scheduler);
+
+        PlanStartResult result = coordinator.ApproveAndStart("plan", plan.Revision,
+            [new ExecutionTask("task", ExecutionRole.Routine, ownershipKeys: ["different-area"])]);
+
+        Assert.False(result.Approved);
+        Assert.Equal(PlanRevisionState.PendingApproval, plans.Get("plan")!.State);
+        Assert.Equal(0, scheduler.ActiveWorkerCount);
+    }
+
+    [Fact]
     public async Task Handoff_StopsOutgoingBeforeWritingCheckpoint()
     {
         var events = new List<string>();
