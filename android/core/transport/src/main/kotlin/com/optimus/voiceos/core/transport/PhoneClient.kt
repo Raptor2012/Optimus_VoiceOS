@@ -19,6 +19,53 @@ import kotlin.concurrent.thread
 /** One destination the PC offers, with why it can or cannot send. */
 data class PcDestination(val id: String, val name: String, val ready: Boolean, val detail: String)
 
+data class PcAgentWorker(
+    val id: String,
+    val name: String,
+    val role: String,
+    val model: String
+)
+
+data class PcFileChangeSummary(
+    val path: String,
+    val additions: Int,
+    val deletions: Int
+)
+
+data class PcProjectTask(
+    val id: String,
+    val title: String,
+    val status: String,
+    val progressPercent: Int,
+    val agent: PcAgentWorker,
+    val conversationSnippet: String,
+    val changedFiles: List<PcFileChangeSummary> = emptyList(),
+    val planOrResultContent: String = ""
+)
+
+data class PcProjectConversation(
+    val id: String,
+    val title: String,
+    val lastMessage: String,
+    val timestamp: String,
+    val messageCount: Int
+)
+
+data class PcProjectItem(
+    val id: String,
+    val name: String,
+    val objective: String,
+    val progressSentence: String,
+    val completedTasks: Int,
+    val totalTasks: Int,
+    val activeWorkers: List<PcAgentWorker>,
+    val nextAction: String,
+    val destinationId: String,
+    val tasks: List<PcProjectTask>,
+    val conversations: List<PcProjectConversation>,
+    val recentResultSummary: String
+)
+
 /** What the PC told us. */
 sealed interface PcEvent {
     data class Connected(val address: String) : PcEvent
@@ -26,6 +73,7 @@ sealed interface PcEvent {
     data class Status(val state: String, val line: String) : PcEvent
     data class Draft(val raw: String, val clean: String, val timings: String, val destinationId: String? = null) : PcEvent
     data class Destinations(val destinations: List<PcDestination>) : PcEvent
+    data class Projects(val projects: List<PcProjectItem>) : PcEvent
     data class SendOutcome(val ok: Boolean, val destination: String, val detail: String) : PcEvent
     data class Failure(val message: String) : PcEvent
     data class TtsAudio(val segment: TtsAudioSegment) : PcEvent
@@ -83,8 +131,8 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                 socket = s
                 synchronized(writeLock) { output = s.getOutputStream() }
 
-                onEvent(PcEvent.Connected("$host:$port"))
                 sendJson(JSONObject().put("t", "hello").put("device", "pixel"))
+                onEvent(PcEvent.Connected("$host:$port"))
 
                 readLoop(s)
             } catch (e: Exception) {
@@ -164,6 +212,84 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
                 "startApprovalCapture" -> onEvent(PcEvent.StartApprovalCapture)
                 "stopApprovalCapture" -> onEvent(PcEvent.StopApprovalCapture)
                 "startRedictationCapture" -> onEvent(PcEvent.StartRedictationCapture)
+                "projects" -> {
+                    val array = o.optJSONArray("projects")
+                    val list = buildList {
+                        for (i in 0 until (array?.length() ?: 0)) {
+                            val p = array!!.getJSONObject(i)
+                            val workersArr = p.optJSONArray("activeWorkers")
+                            val workers = buildList {
+                                for (w in 0 until (workersArr?.length() ?: 0)) {
+                                    val workerObj = workersArr!!.getJSONObject(w)
+                                    add(
+                                        PcAgentWorker(
+                                            id = workerObj.optString("id"),
+                                            name = workerObj.optString("name"),
+                                            role = workerObj.optString("role"),
+                                            model = workerObj.optString("model")
+                                        )
+                                    )
+                                }
+                            }
+                            val tasksArr = p.optJSONArray("tasks")
+                            val tasks = buildList {
+                                for (t in 0 until (tasksArr?.length() ?: 0)) {
+                                    val taskObj = tasksArr!!.getJSONObject(t)
+                                    val agObj = taskObj.optJSONObject("agent")
+                                    val agent = PcAgentWorker(
+                                        id = agObj?.optString("id") ?: "",
+                                        name = agObj?.optString("name") ?: "",
+                                        role = agObj?.optString("role") ?: "",
+                                        model = agObj?.optString("model") ?: ""
+                                    )
+                                    add(
+                                        PcProjectTask(
+                                            id = taskObj.optString("id"),
+                                            title = taskObj.optString("title"),
+                                            status = taskObj.optString("status"),
+                                            progressPercent = taskObj.optInt("progressPercent"),
+                                            agent = agent,
+                                            conversationSnippet = taskObj.optString("conversationSnippet"),
+                                            planOrResultContent = taskObj.optString("planOrResultContent")
+                                        )
+                                    )
+                                }
+                            }
+                            val convsArr = p.optJSONArray("conversations")
+                            val convs = buildList {
+                                for (c in 0 until (convsArr?.length() ?: 0)) {
+                                    val convObj = convsArr!!.getJSONObject(c)
+                                    add(
+                                        PcProjectConversation(
+                                            id = convObj.optString("id"),
+                                            title = convObj.optString("title"),
+                                            lastMessage = convObj.optString("lastMessage"),
+                                            timestamp = convObj.optString("timestamp"),
+                                            messageCount = convObj.optInt("messageCount")
+                                        )
+                                    )
+                                }
+                            }
+                            add(
+                                PcProjectItem(
+                                    id = p.optString("id"),
+                                    name = p.optString("name"),
+                                    objective = p.optString("objective"),
+                                    progressSentence = p.optString("progressSentence"),
+                                    completedTasks = p.optInt("completedTasks"),
+                                    totalTasks = p.optInt("totalTasks"),
+                                    activeWorkers = workers,
+                                    nextAction = p.optString("nextAction"),
+                                    destinationId = p.optString("destinationId"),
+                                    tasks = tasks,
+                                    conversations = convs,
+                                    recentResultSummary = p.optString("recentResultSummary")
+                                )
+                            )
+                        }
+                    }
+                    onEvent(PcEvent.Projects(list))
+                }
                 "destinationSelected" -> onEvent(PcEvent.DestinationSelected(o.optString("destinationId")))
                 else -> Unit
             }
@@ -171,6 +297,8 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
             Log.w(TAG, "bad json: $json", e)
         }
     }
+
+    fun requestProjects() = sendJson(JSONObject().put("t", "requestProjects"))
 
     fun startCapture() = sendJson(JSONObject().put("t", "startCapture"))
 

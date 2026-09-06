@@ -4,29 +4,27 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using Optimus.Providers.Ao;
 using Optimus.Providers.Windows;
 
 /// <summary>
-/// The fixed set of destinations this build can send to, and their bindings.
+/// The set of destinations this build can send to, and their bindings.
 /// </summary>
-/// <remarks>
-/// Deliberately a fixed list rather than a discovery mechanism or plugin surface. Three known
-/// applications is the whole requirement; anything more general would be scope this project has
-/// explicitly ruled out.
-/// </remarks>
 public sealed class DestinationRegistry
 {
     private readonly List<IDestinationAdapter> _adapters;
+    private readonly IAoClient? _aoClient;
 
-    public DestinationRegistry()
-        : this(CreateDefaultAdapters())
+    public DestinationRegistry(IAoClient? aoClient = null)
+        : this(CreateDefaultAdapters(), aoClient)
     {
     }
 
-    public DestinationRegistry(IEnumerable<IDestinationAdapter> adapters)
+    public DestinationRegistry(IEnumerable<IDestinationAdapter> adapters, IAoClient? aoClient = null)
     {
         ArgumentNullException.ThrowIfNull(adapters);
         _adapters = adapters.ToList();
+        _aoClient = aoClient;
 
         if (_adapters.Count == 0)
         {
@@ -34,19 +32,17 @@ public sealed class DestinationRegistry
         }
     }
 
-    public ReadOnlyCollection<IDestinationAdapter> Adapters => _adapters.AsReadOnly();
+    public ReadOnlyCollection<IDestinationAdapter> Adapters
+    {
+        get
+        {
+            lock (_adapters)
+            {
+                return _adapters.ToList().AsReadOnly();
+            }
+        }
+    }
 
-    /// <summary>
-    /// The three configured Windows targets, verified against the live machine.
-    /// </summary>
-    /// <remarks>
-    /// <c>Codex</c> targets the ChatGPT desktop application, which hosts both the ChatGPT and
-    /// Codex workspaces in the same window and switches between them with an in-app selector.
-    /// Nothing in the window's identity reflects that choice, so the adapter cannot verify which
-    /// workspace is active; the user binds the window and is responsible for having Codex
-    /// selected in it. This is stated rather than papered over, because a silent wrong-workspace
-    /// send is precisely the failure the destination rules exist to prevent.
-    /// </remarks>
     private static IDestinationAdapter[] CreateDefaultAdapters() =>
         new IDestinationAdapter[]
         {
@@ -55,11 +51,70 @@ public sealed class DestinationRegistry
             new WindowsAppAdapter("codex", "Codex (ChatGPT app)", "ChatGPT")
         };
 
-    public IDestinationAdapter? Find(string destinationId) =>
-        _adapters.FirstOrDefault(a =>
-            string.Equals(a.DestinationId, destinationId, StringComparison.Ordinal));
+    public void Register(IDestinationAdapter adapter)
+    {
+        ArgumentNullException.ThrowIfNull(adapter);
+        lock (_adapters)
+        {
+            int idx = _adapters.FindIndex(a => string.Equals(a.DestinationId, adapter.DestinationId, StringComparison.Ordinal));
+            if (idx >= 0)
+            {
+                _adapters[idx] = adapter;
+            }
+            else
+            {
+                _adapters.Add(adapter);
+            }
+        }
+    }
+
+    public bool Unregister(string destinationId)
+    {
+        lock (_adapters)
+        {
+            int removed = _adapters.RemoveAll(a => string.Equals(a.DestinationId, destinationId, StringComparison.Ordinal));
+            return removed > 0;
+        }
+    }
+
+    public IDestinationAdapter? Find(string destinationId)
+    {
+        lock (_adapters)
+        {
+            var found = _adapters.FirstOrDefault(a =>
+                string.Equals(a.DestinationId, destinationId, StringComparison.Ordinal));
+            if (found != null)
+            {
+                return found;
+            }
+
+            // On-demand creation for AO targets if AoClient is available
+            if (_aoClient != null && destinationId.StartsWith("ao:", StringComparison.OrdinalIgnoreCase))
+            {
+                string[] parts = destinationId.Split(':');
+                if (parts.Length >= 2)
+                {
+                    string projId = parts[1];
+                    string? sessId = parts.Length >= 3 ? parts[2] : null;
+                    var aoAdapter = new AoDestinationAdapter(_aoClient, projId, sessId);
+                    _adapters.Add(aoAdapter);
+                    return aoAdapter;
+                }
+            }
+
+            return null;
+        }
+    }
 
     /// <summary>Probes every destination. Used to refresh the picker.</summary>
-    public IReadOnlyList<(IDestinationAdapter Adapter, DestinationStatus Status)> ProbeAll() =>
-        _adapters.Select(a => (a, a.Probe())).ToList();
+    public IReadOnlyList<(IDestinationAdapter Adapter, DestinationStatus Status)> ProbeAll()
+    {
+        List<IDestinationAdapter> current;
+        lock (_adapters)
+        {
+            current = _adapters.ToList();
+        }
+
+        return current.Select(a => (a, a.Probe())).ToList();
+    }
 }

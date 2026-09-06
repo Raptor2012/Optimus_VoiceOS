@@ -91,6 +91,36 @@ class ProjectsViewModel : ViewModel() {
         uiState = uiState.copy(showThreadSheet = visible)
     }
 
+    /**
+     * Updates projects with live data from AO daemon via PC bridge.
+     * Preserves browsing selection (current project, current task, reader modal).
+     */
+    fun updateFromLive(liveItems: List<com.optimus.voiceos.core.transport.PcProjectItem>) {
+        if (liveItems.isEmpty()) return
+
+        val mapped = liveItems.map { it.toProjectItem() }
+        val currentSelectedProjId = uiState.selectedProject?.id
+        val currentSelectedTaskId = uiState.selectedTask?.id
+
+        val newSelectedProj = if (currentSelectedProjId != null) {
+            mapped.find { it.id == currentSelectedProjId } ?: uiState.selectedProject
+        } else {
+            null
+        }
+
+        val newSelectedTask = if (currentSelectedTaskId != null && newSelectedProj != null) {
+            newSelectedProj.tasks.find { it.id == currentSelectedTaskId } ?: uiState.selectedTask
+        } else {
+            null
+        }
+
+        uiState = uiState.copy(
+            projects = mapped,
+            selectedProject = newSelectedProj,
+            selectedTask = newSelectedTask
+        )
+    }
+
     private fun createInitialProjects(): List<ProjectItem> {
         val geminiWorker = AgentWorker("gemini", "Gemini 3.8 Flash", "Routine Dev & UI", "gemini-3.8-flash")
         val claudeWorker = AgentWorker("claude", "Claude Opus 5", "Architecture & Debugging", "claude-3-opus")
@@ -235,3 +265,40 @@ class ProjectsViewModel : ViewModel() {
         )
     }
 }
+
+fun com.optimus.voiceos.core.transport.PcProjectItem.toProjectItem(): ProjectItem {
+    return ProjectItem(
+        id = id,
+        name = name,
+        objective = objective,
+        progressSentence = progressSentence,
+        completedTasks = completedTasks,
+        totalTasks = totalTasks,
+        activeWorkers = activeWorkers.map { AgentWorker(it.id, it.name, it.role, it.model) },
+        nextAction = nextAction,
+        destinationId = destinationId,
+        tasks = tasks.map { t ->
+            ProjectTask(
+                id = t.id,
+                title = t.title,
+                status = t.status,
+                progressPercent = t.progressPercent,
+                agent = AgentWorker(t.agent.id, t.agent.name, t.agent.role, t.agent.model),
+                conversationSnippet = t.conversationSnippet,
+                changedFiles = t.changedFiles.map { FileChangeSummary(it.path, it.additions, it.deletions) },
+                planOrResultContent = t.planOrResultContent
+            )
+        },
+        conversations = conversations.map { c ->
+            ProjectConversation(
+                id = c.id,
+                title = c.title,
+                lastMessage = c.lastMessage,
+                timestamp = c.timestamp,
+                messageCount = c.messageCount
+            )
+        },
+        recentResultSummary = recentResultSummary
+    )
+}
+

@@ -125,6 +125,9 @@ public sealed class PhoneEndpoint : IDisposable
     /// <summary>The phone wants the current destination list.</summary>
     public event EventHandler? DestinationsRequested;
 
+    /// <summary>The phone wants the current AO projects list.</summary>
+    public event EventHandler? ProjectsRequested;
+
     /// <summary>The phone confirmed a draft for sending.</summary>
     public event EventHandler<PhoneConfirmEventArgs>? ConfirmRequested;
 
@@ -295,6 +298,10 @@ public sealed class PhoneEndpoint : IDisposable
                 DestinationsRequested?.Invoke(this, EventArgs.Empty);
                 break;
 
+            case "requestProjects":
+                ProjectsRequested?.Invoke(this, EventArgs.Empty);
+                break;
+
             case "confirm":
                 RaiseConfirm(json);
                 break;
@@ -422,6 +429,10 @@ public sealed class PhoneEndpoint : IDisposable
     /// <summary>Pushes the destination list and each one's readiness.</summary>
     public void SendDestinations(IReadOnlyList<PhoneDestination> destinations) =>
         SendJson(new { t = "destinations", destinations });
+
+    /// <summary>Pushes the live AO projects list.</summary>
+    public void SendProjects(object projects) =>
+        SendJson(new { t = "projects", projects });
 
     /// <summary>Reports the outcome of a send. This is the phone's final summary.</summary>
     public void SendSendResult(bool ok, string destinationName, string detail) =>
