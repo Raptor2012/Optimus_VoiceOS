@@ -7,6 +7,7 @@
         xmlns:ctrl="clr-namespace:Optimus.Shell.Controls"
         xmlns:core="clr-namespace:Optimus.Core.Narration;assembly=Optimus.Core"
         xmlns:theme="clr-namespace:Optimus.Shell.Theme"
+        xmlns:views="clr-namespace:Optimus.Shell.Views"
         mc:Ignorable="d"
         Title="Optimus Voice OS"
         FontFamily="Segoe UI"
@@ -87,7 +88,7 @@
                  COLLAPSED CAPSULE: Orb + State label + Destination + Mic toggle + Expand
                  ~280x64px
                  ══════════════════════════════════════════════════════════ -->
-            <Grid MinWidth="280" Height="64" Margin="8,8,8,0">
+            <Grid Width="280" Height="64" Margin="8,8,8,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />  <!-- Orb -->
                     <ColumnDefinition Width="Auto" />  <!-- State label -->
@@ -97,7 +98,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- Animated orb -->
-                <ctrl:VoiceOrb x:Name="Orb" Grid.Column="0"
+                <ctrl:FluidInkOrb x:Name="Orb" Grid.Column="0"
                                WidgetState="{Binding State}"
                                MicEnergy="{Binding MicEnergy}"
                                PlaybackEnergy="{Binding PlaybackEnergy}"
@@ -605,6 +606,7 @@
                     </StackPanel>
                 </ScrollViewer>
             </Border>
+            <views:SettingsPanel x:Name="Settings" Visibility="Collapsed" Margin="8,0,8,8" />
         </StackPanel>
     </Border>
 </Window>

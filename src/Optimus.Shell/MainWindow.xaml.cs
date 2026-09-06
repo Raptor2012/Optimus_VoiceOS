@@ -2,31 +2,27 @@ namespace Optimus.Shell;
 
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Threading.Tasks;
+using Optimus.Shell.Services;
 using Optimus.Shell.ViewModels;
 
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001", Justification = "WPF lifetime disposes owned services when the window closes")]
 public partial class MainWindow : Window
 {
     public WidgetViewModel ViewModel { get; }
     public AgentCapacityViewModel CapacityViewModel { get; }
+    private readonly TrayService _trayService;
+    private readonly HotkeyService _companionHotkeys;
+    private bool _allowClose;
+    private DateTime _lastVoiceFocus = DateTime.MinValue;
 
     private static readonly string PositionFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Optimus", "capsule-position.json");
-
-    // Win32: WS_EX_NOACTIVATE prevents stealing focus when clicking
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_NOACTIVATE = 0x08000000;
-
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
     public MainWindow(WidgetViewModel viewModel)
     {
@@ -35,6 +31,20 @@ public partial class MainWindow : Window
         CapacityViewModel = new AgentCapacityViewModel();
         AgentCapacity.DataContext = CapacityViewModel;
         DataContext = ViewModel;
+        ViewModel.IsExpanded = ViewModel.Preferences.StartExpanded;
+
+        _trayService = new TrayService();
+        _trayService.ShowHideRequested += OnTrayShowHide;
+        _trayService.ToggleListeningRequested += OnToggleListening;
+        _trayService.QuitRequested += OnTrayQuit;
+        _companionHotkeys = new HotkeyService(ViewModel.Preferences);
+        _companionHotkeys.Pressed += OnCompanionHotkey;
+        _companionHotkeys.RegistrationFailed += (_, message) => ViewModel.StatusLine = message;
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+
+        Settings.LoadSettings(ViewModel.Preferences, CapacityViewModel);
+        Settings.Closed += (_, _) => CloseSettings();
+        Settings.SettingsChanged += OnSettingsChanged;
 
         Loaded += OnLoaded;
         LocationChanged += OnLocationChanged;
@@ -45,10 +55,7 @@ public partial class MainWindow : Window
     {
         base.OnSourceInitialized(e);
 
-        // Set WS_EX_NOACTIVATE so the capsule never steals focus from normal windows
-        var hwnd = new WindowInteropHelper(this).Handle;
-        int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        _ = SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+        _companionHotkeys.Attach(this);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -151,10 +158,103 @@ public partial class MainWindow : Window
 
     #endregion
 
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (Settings.Visibility == Visibility.Visible) CloseSettings();
+        else
+        {
+            Settings.LoadSettings(ViewModel.Preferences, CapacityViewModel);
+            Settings.Visibility = Visibility.Visible;
+            ViewModel.IsExpanded = true;
+        }
+    }
+
+    private void CloseSettings() => Settings.Visibility = Visibility.Collapsed;
+
+    private void OnSettingsChanged(object? sender, EventArgs e)
+    {
+        _companionHotkeys.SetBinding(CompanionHotkeyAction.ToggleListening,
+            ParseHotkey(ViewModel.Preferences.ToggleListeningHotkey, _companionHotkeys.ListeningBinding));
+        _companionHotkeys.SetBinding(CompanionHotkeyAction.ToggleCompanion,
+            ParseHotkey(ViewModel.Preferences.ToggleCompanionHotkey, _companionHotkeys.CompanionBinding));
+    }
+
+    private void OnTrayShowHide(object? sender, EventArgs e)
+    {
+        if (IsVisible) Hide(); else ShowCompanion();
+    }
+
+    private void OnToggleListening(object? sender, EventArgs e) => ViewModel.IsPaused = !ViewModel.IsPaused;
+
+    private void OnCompanionHotkey(object? sender, CompanionHotkeyAction action)
+    {
+        if (action == CompanionHotkeyAction.ToggleCompanion) OnTrayShowHide(sender, EventArgs.Empty);
+        else OnToggleListening(sender, EventArgs.Empty);
+    }
+
+    private void ShowCompanion()
+    {
+        Show();
+        _trayService.SetVisible(true);
+        ClampToMonitor();
+    }
+
+    private void OnTrayQuit(object? sender, EventArgs e)
+    {
+        _allowClose = true;
+        Application.Current.Shutdown();
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (!_allowClose)
+        {
+            e.Cancel = true;
+            Hide();
+            _trayService.SetVisible(false);
+        }
+        base.OnClosing(e);
+    }
+
+    private async void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(WidgetViewModel.State) ||
+            ViewModel.State is not (Optimus.Shell.Models.WidgetState.Listening or Optimus.Shell.Models.WidgetState.SessionListening)) return;
+        if ((DateTime.UtcNow - _lastVoiceFocus).TotalMilliseconds < 500) return;
+        _lastVoiceFocus = DateTime.UtcNow;
+        ShowCompanion();
+        Topmost = true;
+        Activate();
+        await Task.Delay(1400);
+        if (IsVisible) Topmost = true;
+    }
+
     protected override void OnClosed(EventArgs e)
     {
+        ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _companionHotkeys.Pressed -= OnCompanionHotkey;
+        _companionHotkeys.Dispose();
+        _trayService.Dispose();
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         CapacityViewModel.Dispose();
         base.OnClosed(e);
+    }
+
+    private static Optimus.Core.Hotkeys.HotkeyBinding ParseHotkey(string? value, Optimus.Core.Hotkeys.HotkeyBinding fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        string[] parts = value.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        Optimus.Core.Hotkeys.HotkeyModifiers modifiers = Optimus.Core.Hotkeys.HotkeyModifiers.None;
+        int key = 0;
+        foreach (string part in parts)
+        {
+            if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase)) modifiers |= Optimus.Core.Hotkeys.HotkeyModifiers.Control;
+            else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase)) modifiers |= Optimus.Core.Hotkeys.HotkeyModifiers.Shift;
+            else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase)) modifiers |= Optimus.Core.Hotkeys.HotkeyModifiers.Alt;
+            else if (part.Equals("Space", StringComparison.OrdinalIgnoreCase)) key = 0x20;
+            else if (part.StartsWith("F", StringComparison.OrdinalIgnoreCase) && int.TryParse(part[1..], out int function) && function is >= 1 and <= 12) key = 0x6F + function;
+            else if (part.Length == 1) key = char.ToUpperInvariant(part[0]);
+        }
+        return key == 0 ? fallback : Optimus.Core.Hotkeys.HotkeyBinding.FromVirtualKey(key, modifiers);
     }
 }

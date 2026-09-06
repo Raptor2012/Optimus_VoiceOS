@@ -1,0 +1,52 @@
+<UserControl x:Class="Optimus.Shell.Views.SettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="372"
+             Background="{StaticResource SurfaceBrush}">
+    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
+        <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <DockPanel Margin="0,0,0,14">
+                    <TextBlock Text="SETTINGS" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                    <Button DockPanel.Dock="Right" Content="×" Click="OnClose" Background="Transparent" Foreground="{StaticResource SecondaryBrush}" BorderThickness="0" FontSize="18" Padding="4,0" />
+                </DockPanel>
+
+                <TextBlock Text="VOICE" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource SecondaryBrush}" />
+                <ComboBox x:Name="VoiceCombo" Margin="0,5,0,8" Background="{StaticResource RaisedBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}">
+                    <ComboBoxItem Content="Default local voice" />
+                    <ComboBoxItem Content="Piper · warm" />
+                    <ComboBoxItem Content="Piper · clear" />
+                </ComboBox>
+                <DockPanel Margin="0,0,0,8">
+                    <TextBlock Text="Speaking speed" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="SpeedLabel" DockPanel.Dock="Right" Foreground="{StaticResource AccentBrush}" />
+                </DockPanel>
+                <Slider x:Name="SpeedSlider" Minimum="0.6" Maximum="1.6" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="OnSpeedChanged" Foreground="{StaticResource AccentBrush}" />
+                <CheckBox x:Name="NarrationCheck" Content="Read agent updates aloud" Margin="0,9,0,16" Foreground="{StaticResource TextBrush}" Checked="OnPreferenceChanged" Unchecked="OnPreferenceChanged" />
+
+                <TextBlock Text="HOTKEYS" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource SecondaryBrush}" />
+                <Grid Margin="0,7,0,16">
+                    <Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="Toggle listening" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                    <TextBox x:Name="ListeningHotkeyBox" Grid.Column="1" Padding="7,4" Background="{StaticResource RaisedBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}" TextChanged="OnPreferenceChanged" />
+                    <TextBlock Grid.Row="1" Text="Show / hide companion" Margin="0,8,0,0" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" />
+                    <TextBox x:Name="CompanionHotkeyBox" Grid.Row="1" Grid.Column="1" Margin="0,8,0,0" Padding="7,4" Background="{StaticResource RaisedBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}" TextChanged="OnPreferenceChanged" />
+                </Grid>
+
+                <TextBlock Text="APPEARANCE" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource SecondaryBrush}" />
+                <ComboBox x:Name="ModeCombo" Margin="0,6,0,16" Background="{StaticResource RaisedBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}" SelectionChanged="OnPreferenceChanged">
+                    <ComboBoxItem Content="Compact capsule" Tag="compact" />
+                    <ComboBoxItem Content="Expanded companion" Tag="expanded" />
+                </ComboBox>
+
+                <DockPanel Margin="0,0,0,7">
+                    <TextBlock Text="AGENTS" FontSize="9" FontWeight="SemiBold" Foreground="{StaticResource SecondaryBrush}" />
+                    <Button DockPanel.Dock="Right" Content="Reset timers" Click="OnResetTimers" Padding="7,2" Background="{StaticResource RaisedBrush}" Foreground="{StaticResource AccentBrush}" BorderThickness="0" FontSize="10" />
+                </DockPanel>
+                <ItemsControl x:Name="AgentsList" />
+                <TextBlock Text="Capacity windows are local estimates and refresh automatically." FontSize="10" TextWrapping="Wrap" Foreground="{StaticResource SecondaryBrush}" Margin="0,8,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>
