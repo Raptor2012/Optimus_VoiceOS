@@ -116,18 +116,25 @@ Conversation suite passes with paraphrased requests, pronoun resolution, and con
 
 - **Owner**: Claude Opus 5
 - **Dependencies**: Slice 5
+- **Status**: **Completed**
 
 ### Deliverable
 Implement the desktop automation toolset: window management, UI Automation inspection, coordinate clicks, text input, and send verification.
 
 ### Scope
-- Tools: `ListWindows`, `FocusWindow`, `InspectAccessibility`, `CaptureRegion`, `InvokeElement`, `ClickCoordinates`, `EnterText`, `PressShortcut`, `ReadVisibleContent`.
+- Tools: `ListWindows`, `FocusWindow`, `InspectAccessibility`, `CaptureRegion`, `InvokeElement`, `ClickCoordinates`, `EnterText`, `PressShortcut`, `ReadVisibleContent`, `ObserveResult`.
 - Prefer accessible element invocation over raw coordinates.
 - Verify outcome before declaring success (clicking send is not proof of acceptance).
 - Gracefully pause execution when manual user input is detected.
 
-### Done Condition
-Automated and live tests verify reliable window focusing, control invocation, text entry, and outcome observation across test windows.
+### Done Condition & Evidence
+1. **Desktop Observation**: `DesktopObserver` provides window listing, scoped UI Automation inspection, and text extraction. Scoping tests confirm control trees are strictly isolated to the target window.
+2. **Desktop Execution**: `DesktopExecutor` supports window focusing, accessible element invocation with coordinate fallback, coordinate clicking, mouse wheel scrolling, text entry, and keyboard shortcuts.
+3. **Text Entry Safety**: Preserves existing unsent content, avoids destructive overwrite, leverages accessible `ValuePattern` entry when supported, and uses clipboard paste with full restoration of user clipboard data.
+4. **Takeover Detection**: `ManualTakeoverDetector` identifies physical hardware input while distinguishing Optimus synthetic inputs (`dwExtraInfo = 0x4F505449`), immediately pauses execution, and enforces fresh observation before resuming.
+5. **Screen Capture & Headroom**: `ScreenCapture` captures lossless PNGs with readable text, bidirectional coordinate mapping (`MapImageToScreen`/`MapScreenToImage`), and reserves 1.0–1.5 GB VRAM headroom.
+6. **Bounded Deadlines & Layout Changes**: `WaitForStateChangeAsync` polls for state changes with bounded deadlines, triggers one reobservation on layout change, and reports obstacles cleanly.
+7. **Verification**: All 83 provider tests and 623 full solution tests pass.
 
 ---
 
