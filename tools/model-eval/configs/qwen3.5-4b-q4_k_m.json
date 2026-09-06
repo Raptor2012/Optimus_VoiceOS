@@ -1,0 +1,12 @@
+{
+  "id": "qwen3.5-4b-q4_k_m",
+  "displayName": "Qwen3.5 4B Q4_K_M",
+  "modelFile": "qwen3.5-4b-q4_k_m/Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+  "architecture": "qwen35",
+  "quantization": "Q4_K_M",
+  "contextWindow": 8192,
+  "gpuLayers": 99,
+  "chatFormat": "jinja",
+  "visionCapable": false,
+  "llamaServerArguments": ["--jinja", "--reasoning-budget", "0", "-ngl", "99"]
+}

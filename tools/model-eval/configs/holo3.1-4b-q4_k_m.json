@@ -1,0 +1,12 @@
+{
+  "id": "holo3.1-4b-q4_k_m",
+  "displayName": "Holo 3.1 4B Q4_K_M",
+  "modelFile": "holo3.1-4b-q4_k_m/Holo-3.1-4B.Q4_K_M.gguf",
+  "architecture": "holo31",
+  "quantization": "Q4_K_M",
+  "contextWindow": 8192,
+  "gpuLayers": 99,
+  "chatFormat": "jinja",
+  "visionCapable": true,
+  "llamaServerArguments": ["--jinja", "--reasoning-budget", "0", "-ngl", "99"]
+}
