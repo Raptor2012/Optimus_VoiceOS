@@ -12,6 +12,7 @@ using Optimus.Core.Speech;
 using Optimus.Core.Voice;
 using Optimus.Inference;
 using Optimus.Providers;
+using Optimus.Shell.Theme;
 using Optimus.Shell.ViewModels;
 
 /// <summary>
@@ -38,6 +39,13 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Respect system reduced-motion accessibility setting
+        if (DesignTokens.IsReducedMotion)
+        {
+            Resources[DesignTokens.ResourceKeys.ControlAnimationDuration] = DesignTokens.ControlDuration;
+            Resources[DesignTokens.ResourceKeys.PanelAnimationDuration] = DesignTokens.PanelDuration;
+        }
 
         if (e.Args.Contains("--smoke"))
         {
