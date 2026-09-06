@@ -16,6 +16,7 @@ public sealed class VoicePipeline : IDisposable
     private readonly IIntentInterpreter? _intentInterpreter;
     private readonly IDigestSummarizer? _digestSummarizer;
     private readonly LlamaServerProcess? _llamaServer;
+    private readonly ILocalModelClient? _localModelClient;
     private readonly bool _ownsDependencies;
     private bool _disposed;
 
@@ -32,6 +33,7 @@ public sealed class VoicePipeline : IDisposable
         _intentInterpreter = interpreter;
         _digestSummarizer = summarizer;
         _llamaServer = llama;
+        _localModelClient = new LocalModelClient(llama);
         _ownsDependencies = true;
     }
 
@@ -58,6 +60,9 @@ public sealed class VoicePipeline : IDisposable
     public IIntentInterpreter? IntentInterpreter => _intentInterpreter;
 
     public IDigestSummarizer? DigestSummarizer => _digestSummarizer;
+
+    /// <summary>Shared local model client for the end-to-end desktop orchestrator.</summary>
+    public ILocalModelClient? LocalModelClient => _localModelClient;
 
     /// <summary>
     /// Transcribes audio directly through Parakeet without invoking prompt cleanup.
@@ -185,7 +190,11 @@ public sealed class VoicePipeline : IDisposable
             _cleaner.Dispose();
             _intentInterpreter?.Dispose();
             _digestSummarizer?.Dispose();
-            _llamaServer?.Dispose();
+            (_localModelClient as IDisposable)?.Dispose();
+            if (_localModelClient == null)
+            {
+                _llamaServer?.Dispose();
+            }
         }
     }
 }

@@ -18,7 +18,8 @@ public sealed record PipelineExecutionResult(
     bool Succeeded,
     string Detail,
     string? Response = null,
-    bool TargetAvailable = true);
+    bool TargetAvailable = true,
+    string? ResponseBaseline = null);
 
 public interface IPipelineActionExecutor
 {
@@ -72,7 +73,11 @@ public sealed class ResponseMonitorStage : IPipelineResponseObserver
     public Task<string?> ObserveAsync(ModelDecision decision, PipelineExecutionResult execution, CancellationToken cancellationToken = default)
     {
         if (!execution.Succeeded) return Task.FromResult<string?>(execution.Detail);
-        return _monitor.MonitorResponseAsync(_windowResolver(decision), _turnResolver(decision), cancellationToken: cancellationToken);
+        return _monitor.MonitorResponseAsync(
+            _windowResolver(decision),
+            _turnResolver(decision),
+            execution.ResponseBaseline,
+            cancellationToken);
     }
 }
 
@@ -100,7 +105,7 @@ public sealed class ProviderRouterActionExecutor : IPipelineActionExecutor, IPip
             await adapter.SendMessage(decision.Message).ConfigureAwait(false);
             bool verified = await adapter.VerifySent().ConfigureAwait(false);
             return verified
-                ? new(true, "Request sent.")
+                ? new(true, "Request sent.", ResponseBaseline: state.LastResponse)
                 : new(false, "The destination did not confirm the request was sent.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -246,7 +251,10 @@ public sealed class PipelineOrchestrator
         catch (Exception ex)
         {
             _log?.Invoke($"[Pipeline] local model unavailable: {ex.Message}");
-            _background.Queue("local model retry", _ => Task.FromResult(string.Empty), cancellationToken: CancellationToken.None);
+            _background.Queue(
+                "local model retry",
+                retryToken => RetryQueuedRequestAsync(transcript, decision, request.MaxTokens, retryToken),
+                cancellationToken: CancellationToken.None);
             response = GracefulDegradation.ForModelUnavailable();
             return await FinishAsync(false, transcript, ModelDecision.Respond(response), response, PipelineStage.Plan, cancellationToken).ConfigureAwait(false);
         }
@@ -264,6 +272,8 @@ public sealed class PipelineOrchestrator
                 response = execution.TargetAvailable ? execution.Detail : GracefulDegradation.ForTargetUnavailable(decision.TargetId ?? "The selected app");
                 return await FinishAsync(false, transcript, ModelDecision.Respond(response), response, PipelineStage.Execute, cancellationToken).ConfigureAwait(false);
             }
+            // Corrections must know that the exact coordinator-bound request was dispatched.
+            _coordinator.AcknowledgeToolInvocation();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -308,6 +318,30 @@ public sealed class PipelineOrchestrator
         return new(succeeded, transcript, response, decision, snapshot, failedStage);
     }
 
+    private async Task<string> RetryQueuedRequestAsync(
+        string transcript,
+        ModelDecision coordinatorDecision,
+        int maxTokens,
+        CancellationToken cancellationToken)
+    {
+        string output = await _model.CompleteTextAsync(
+            $"Return a JSON tool call only when needed. User request: {transcript}\nResolved target: {coordinatorDecision.TargetId}",
+            maxTokens,
+            cancellationToken).ConfigureAwait(false);
+        if (ToolCallParser.TryParse(output, out IReadOnlyList<LlamaServerProcess.ToolCall> calls) && calls.Count > 0)
+        {
+            ModelDecision decision = ToDecision(calls[0], coordinatorDecision);
+            if (decision.IsExecutable)
+            {
+                PipelineExecutionResult execution = await _executor.ExecuteAsync(decision, cancellationToken).ConfigureAwait(false);
+                if (!execution.Succeeded) return execution.Detail;
+                _coordinator.AcknowledgeToolInvocation();
+                return await _observer.ObserveAsync(decision, execution, cancellationToken).ConfigureAwait(false) ?? execution.Detail;
+            }
+        }
+        return output.Trim();
+    }
+
     private void SaveTurn(ConversationTurnResult result, string? response)
     {
         _memory?.SaveTurn(result.Turn.TurnId.ToString(), result.Turn.OriginDevice, result.Turn.Transcript,
@@ -317,14 +351,18 @@ public sealed class PipelineOrchestrator
 
     private static ModelDecision ToDecision(LlamaServerProcess.ToolCall call, ModelDecision fallback)
     {
-        string? target = ReadString(call.Arguments, "targetId") ?? fallback.TargetId;
-        string objective = ReadString(call.Arguments, "objective") ?? fallback.Message;
-        return string.IsNullOrWhiteSpace(target)
-            ? fallback
-            : ModelDecision.InvokeTool(call.Name, objective, target, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        // Coordinator resolution is authoritative. A model may refine formatting, but it may
+        // never turn clarification/confirmation into execution or select another destination.
+        if (fallback.Kind != ModelDecisionKind.InvokeTool || fallback.RequiresConfirmation ||
+            !string.Equals(call.Name, fallback.ToolName, StringComparison.OrdinalIgnoreCase))
+            return fallback;
+
+        string? target = ReadString(call.Arguments, "targetId");
+        if (!string.Equals(target, fallback.TargetId, StringComparison.OrdinalIgnoreCase)) return fallback;
+        return ModelDecision.InvokeTool(fallback.ToolName!, fallback.Message, fallback.TargetId!, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["objective"] = objective,
-                ["targetId"] = target
+                ["objective"] = fallback.Message,
+                ["targetId"] = fallback.TargetId!
             });
     }
 
