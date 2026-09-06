@@ -40,6 +40,18 @@ class TalkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnect() = controller.disconnect()
 
+    fun onGestureStart() = controller.onGestureDown()
+
+    fun onGestureEnd(elapsedMs: Long) = controller.onGestureUp(elapsedMs)
+
+    fun onGestureCancel() = controller.onGestureCancel()
+
+    fun endConversation() = controller.endConversation()
+
+    fun onPermissionGranted() = controller.onPermissionGranted()
+
+    fun onPermissionDenied() = controller.onPermissionDenied()
+
     fun startCapture() = controller.startCapture()
 
     fun stopCapture() = controller.stopCapture()

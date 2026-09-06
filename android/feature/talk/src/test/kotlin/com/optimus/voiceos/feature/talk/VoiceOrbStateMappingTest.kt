@@ -69,4 +69,43 @@ class VoiceOrbStateMappingTest {
         val withNone = TalkUiState()
         assertEquals("Voice Destination", withNone.selectedDestinationName)
     }
+
+    @Test
+    fun playbackActiveMappedToReadingDraftEvenWhenAudioDeviceRunning() {
+        // Microphone running for echo cancellation during assistant speech must map to ReadingDraft, not Listening
+        val state = TalkUiState(
+            playbackActive = true,
+            audioDeviceRunning = true,
+            userUtteranceInProgress = false
+        )
+        assertEquals(VoiceOrbState.ReadingDraft, state.toVoiceOrbState())
+    }
+
+    @Test
+    fun userUtteranceInProgressMappedToListening() {
+        val state = TalkUiState(
+            userUtteranceInProgress = true,
+            audioDeviceRunning = true
+        )
+        assertEquals(VoiceOrbState.Listening, state.toVoiceOrbState())
+    }
+
+    @Test
+    fun continuousConversationActiveMappedToSessionListening() {
+        val state = TalkUiState(
+            conversationEnabled = true,
+            audioDeviceRunning = true,
+            userUtteranceInProgress = false
+        )
+        assertEquals(VoiceOrbState.SessionListening, state.toVoiceOrbState())
+    }
+
+    @Test
+    fun desktopRequestRunningMappedToProcessing() {
+        val state = TalkUiState(
+            desktopRequestRunning = true,
+            userUtteranceInProgress = false
+        )
+        assertEquals(VoiceOrbState.Processing, state.toVoiceOrbState())
+    }
 }
