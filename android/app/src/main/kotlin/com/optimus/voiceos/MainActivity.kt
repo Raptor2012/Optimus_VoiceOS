@@ -70,7 +70,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var updatesModel: UpdatesViewModel
 
     private val requestMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) talkModel.startCapture()
+        if (granted) {
+            talkModel.onPermissionGranted()
+        } else {
+            talkModel.onPermissionDenied()
+        }
     }
 
     private val requestNotification = registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ -> }
@@ -96,11 +100,11 @@ class MainActivity : ComponentActivity() {
 
         // Wire service callbacks to ViewModel
         VoiceConversationService.onConversationEnded = {
-            talkModel.stopCapture()
+            talkModel.endConversation()
         }
         VoiceConversationService.onMuteToggled = { muted ->
-            if (muted && talkModel.uiState.capturing) {
-                talkModel.stopCapture()
+            if (muted && talkModel.uiState.userUtteranceInProgress) {
+                talkModel.onGestureCancel()
             }
         }
 
@@ -116,8 +120,9 @@ class MainActivity : ComponentActivity() {
                 var currentDestination by rememberSaveable { mutableStateOf(AppDestination.Talk) }
 
                 // Synchronize foreground service with voice conversation state
-                LaunchedEffect(talkVm.uiState.capturing) {
-                    if (talkVm.uiState.capturing) {
+                LaunchedEffect(talkVm.uiState.conversationEnabled, talkVm.uiState.userUtteranceInProgress) {
+                    val active = talkVm.uiState.conversationEnabled || talkVm.uiState.userUtteranceInProgress
+                    if (active) {
                         VoiceConversationService.start(context, talkVm.uiState.selectedDestinationName)
                     } else {
                         VoiceConversationService.stop(context)
@@ -227,7 +232,11 @@ class MainActivity : ComponentActivity() {
                                     onPortChange = talkVm::setPort,
                                     onConnect = talkVm::connect,
                                     onDisconnect = talkVm::disconnect,
-                                    onStartCapture = ::startCaptureWithPermission,
+                                    onGestureStart = ::handleGestureStart,
+                                    onGestureEnd = talkVm::onGestureEnd,
+                                    onGestureCancel = talkVm::onGestureCancel,
+                                    onEndConversation = talkVm::endConversation,
+                                    onStartCapture = ::handleGestureStart,
                                     onStopCapture = talkVm::stopCapture,
                                     onDraftChange = talkVm::setDraft,
                                     onSelectDestination = talkVm::selectDestination,
@@ -276,19 +285,22 @@ class MainActivity : ComponentActivity() {
                         if (currentDestination != AppDestination.Talk) {
                             CompactConversationCapsule(
                                 destinationName = talkVm.uiState.selectedDestinationName,
-                                statusText = if (talkVm.uiState.capturing) "Recording voice..." else talkVm.uiState.status,
+                                statusText = when {
+                                    talkVm.uiState.playbackActive -> "Speaking..."
+                                    talkVm.uiState.userUtteranceInProgress -> "Recording voice..."
+                                    talkVm.uiState.conversationEnabled -> "Conversation active"
+                                    else -> talkVm.uiState.status
+                                },
                                 orbState = talkVm.uiState.toVoiceOrbState(),
-                                isCapturing = talkVm.uiState.capturing,
+                                isCapturing = talkVm.uiState.userUtteranceInProgress,
+                                conversationEnabled = talkVm.uiState.conversationEnabled,
                                 onCapsuleClick = {
                                     currentDestination = AppDestination.Talk
                                 },
-                                onQuickMicClick = {
-                                    if (talkVm.uiState.capturing) {
-                                        talkVm.stopCapture()
-                                    } else {
-                                        startCaptureWithPermission()
-                                    }
-                                },
+                                onGestureStart = ::handleGestureStart,
+                                onGestureEnd = talkVm::onGestureEnd,
+                                onGestureCancel = talkVm::onGestureCancel,
+                                onEndConversation = talkVm::endConversation,
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .padding(bottom = 8.dp)
@@ -300,14 +312,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startCaptureWithPermission() {
+    private fun handleGestureStart() {
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
         if (granted) {
-            talkModel.startCapture()
+            talkModel.onGestureStart()
         } else {
             requestMic.launch(Manifest.permission.RECORD_AUDIO)
         }
+    }
+
+    private fun startCaptureWithPermission() {
+        handleGestureStart()
     }
 }

@@ -17,6 +17,7 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     private val main = Handler(Looper.getMainLooper())
     private var state = TalkUiState()
+    private val stateMachine = TalkRecordingStateMachine()
 
     private val client = PhoneClient { event -> main.post { handle(event) } }
 
@@ -33,10 +34,13 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         player = TtsAudioPlayer(
             onActiveChanged = { active -> main.post {
                 if (active) {
-                    // Keep the AEC/VAD microphone hot during playback.  Speech onset cancels the
-                    // current generation and promotes the 300 ms pre-roll to a new utterance.
-                    if (!mic.isRecording) mic.start()
-                    update { it.copy(capturing = true, status = "Speaking...") }
+                    val action = stateMachine.onPlaybackStarted()
+                    applyAction(action)
+                    syncState { it.copy(status = "Speaking...") }
+                } else {
+                    val action = stateMachine.onPlaybackEnded()
+                    applyAction(action)
+                    syncState()
                 }
             } },
             onDrained = client::playbackDrained,
@@ -80,9 +84,6 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     /**
      * Sends the draft exactly as displayed, to the destination the user picked.
-     *
-     * Refuses rather than guessing when no destination is chosen or the draft is empty, and the
-     * screen only shows Sent once the PC confirms the adapter actually delivered it.
      */
     fun confirm() {
         val destination = state.selectedDestinationId
@@ -129,9 +130,11 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 
     fun disconnect() {
-        stopCapture()
+        onGestureCancel()
+        endConversation()
         client.disconnect()
-        update {
+        stateMachine.onDisconnect()
+        syncState {
             it.copy(
                 connected = false,
                 connectionLabel = "Not connected",
@@ -140,35 +143,130 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         }
     }
 
-    fun startCapture() {
+    /**
+     * 1) Pointer-down starts temporary utterance capture.
+     * 8) Recording-state update or recomposition cannot restart gesture ownership.
+     * 9) Each gesture issues one start and one applicable end/cancel event.
+     */
+    fun onGestureDown() {
         if (!client.isConnected) {
             update { it.copy(error = "Not connected") }
             return
         }
 
-        client.startCapture()
-
-        if (!mic.start()) {
-            client.stopCapture()
-            update { it.copy(error = "Microphone unavailable", capturing = false) }
-            return
+        val action = stateMachine.onGestureDown(client.isConnected)
+        if (action == TalkRecordingAction.StartUtteranceCapture) {
+            update { it.forNewCapture() }
+            applyAction(action)
         }
+        syncState()
+    }
 
+    /**
+     * 2) Release within 300ms starts or retains continuous conversation mode.
+     * 3) Release after 300ms ends that held utterance.
+     * 5) Later held utterance inside conversation mode submits on release then returns to conversational listening.
+     */
+    fun onGestureUp(elapsedMs: Long) {
+        val action = stateMachine.onGestureUp(elapsedMs)
+        applyAction(action)
+        syncState()
+    }
+
+    /**
+     * 6) Gesture cancellation discards temporary utterance without ending active conversation.
+     */
+    fun onGestureCancel() {
+        val action = stateMachine.onGestureCancel()
+        applyAction(action)
+        syncState()
+    }
+
+    /**
+     * 4) Separate End action ends continuous conversation mode.
+     */
+    fun endConversation() {
+        val action = stateMachine.onEndConversation()
+        applyAction(action)
+        syncState { it.copy(status = "Conversation ended") }
+    }
+
+    fun onPermissionGranted() {
         update {
-            it.forNewCapture().copy(
-                capturing = true,
+            it.copy(
                 error = "",
-                status = "Recording..."
+                status = if (it.connected) "Hold to speak, or tap for continuous conversation" else "Enter the PC address and connect"
             )
         }
     }
 
-    fun stopCapture() {
-        if (!state.capturing) return
+    fun onPermissionDenied() {
+        update { it.copy(error = "Microphone permission required") }
+    }
 
-        mic.stop()
-        client.stopCapture()
-        update { it.copy(capturing = false, status = "Sent to PC, waiting for draft...") }
+    // Backwards-compatible methods
+    fun startCapture() = onGestureDown()
+    fun stopCapture() = onGestureUp(TalkRecordingStateMachine.HOLD_THRESHOLD_MS + 100)
+
+    private fun applyAction(action: TalkRecordingAction) {
+        when (action) {
+            is TalkRecordingAction.StartUtteranceCapture -> {
+                client.startCapture()
+                if (!mic.start()) {
+                    stateMachine.onGestureCancel()
+                    update { it.copy(error = "Microphone unavailable") }
+                }
+            }
+            is TalkRecordingAction.SubmitUtterance -> {
+                client.stopCapture()
+                if (!action.retainConversation) {
+                    mic.stop()
+                }
+            }
+            is TalkRecordingAction.DiscardUtterance -> {
+                client.cancel()
+                if (!action.retainConversation) {
+                    mic.stop()
+                }
+            }
+            is TalkRecordingAction.EndConversation -> {
+                mic.stop()
+                client.stopCapture()
+            }
+            is TalkRecordingAction.StartEchoCancellationMic -> {
+                if (!mic.isRecording) mic.start()
+            }
+            is TalkRecordingAction.StopEchoCancellationMic -> {
+                mic.stop()
+            }
+            is TalkRecordingAction.None -> Unit
+        }
+    }
+
+    private fun syncState(transform: (TalkUiState) -> TalkUiState = { it }) {
+        update { current ->
+            val defaultStatus = when {
+                current.error.isNotBlank() -> current.error
+                stateMachine.playbackActive -> "Speaking..."
+                stateMachine.userUtteranceInProgress -> "Recording..."
+                stateMachine.desktopRequestRunning -> "Sent to PC, waiting for draft..."
+                stateMachine.conversationEnabled -> "Conversation active — listening"
+                current.sending -> "Sending..."
+                current.hasDraft -> "Draft ready"
+                current.connected -> "Hold to speak, or tap for continuous conversation"
+                else -> "Enter the PC address and connect"
+            }
+            val synced = current.copy(
+                conversationEnabled = stateMachine.conversationEnabled,
+                audioDeviceRunning = stateMachine.audioDeviceRunning,
+                userUtteranceInProgress = stateMachine.userUtteranceInProgress,
+                playbackActive = stateMachine.playbackActive,
+                desktopRequestRunning = stateMachine.desktopRequestRunning,
+                capturing = stateMachine.userUtteranceInProgress,
+                status = defaultStatus
+            )
+            transform(synced)
+        }
     }
 
     private fun startApprovalCapture() {
@@ -198,11 +296,13 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         when (event) {
             is PcEvent.Connected -> {
                 client.requestProjects()
+                stateMachine.onDisconnect()
                 update {
                     it.copy(
                         connected = true,
                         connectionLabel = "Connected to ${event.address}",
-                        error = ""
+                        error = "",
+                        status = "Hold to speak, or tap for continuous conversation"
                     )
                 }
             }
@@ -212,7 +312,8 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             is PcEvent.Disconnected -> {
                 mic.stop()
                 player.reset()
-                update {
+                stateMachine.onDisconnect()
+                syncState {
                     it.copy(
                         connected = false,
                         capturing = false,
@@ -234,29 +335,47 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
                 current.copy(destinations = event.destinations, selectedDestinationId = stillThere)
             }
 
-            is PcEvent.SendOutcome -> update { it.withSendOutcome(event) }
-
-            is PcEvent.Draft -> update {
-                val destId = event.destinationId ?: it.selectedDestinationId
-                it.copy(
-                    rawTranscript = event.raw,
-                    cleanedDraft = event.clean,
-                    timings = event.timings,
-                    selectedDestinationId = destId,
-                    status = "Draft ready"
-                )
+            is PcEvent.SendOutcome -> {
+                stateMachine.onDesktopResponseReceived()
+                syncState { it.withSendOutcome(event) }
             }
 
-            is PcEvent.Failure -> update { it.copy(error = event.message) }
+            is PcEvent.Draft -> {
+                stateMachine.onDesktopResponseReceived()
+                val destId = event.destinationId ?: state.selectedDestinationId
+                syncState {
+                    it.copy(
+                        rawTranscript = event.raw,
+                        cleanedDraft = event.clean,
+                        timings = event.timings,
+                        selectedDestinationId = destId,
+                        status = "Draft ready"
+                    )
+                }
+            }
+
+            is PcEvent.Failure -> {
+                stateMachine.onDesktopResponseReceived()
+                syncState { it.copy(error = event.message) }
+            }
 
             is PcEvent.TtsAudio -> player.enqueue(event.segment)
             is PcEvent.Playback -> when (event.state) {
                 "start" -> {
                     player.start(event.generation)
-                    if (!mic.isRecording) mic.start()
+                    applyAction(stateMachine.onPlaybackStarted())
+                    syncState { it.copy(status = "Speaking...") }
                 }
-                "end" -> player.finish(event.generation)
-                "cancel" -> player.cancel(event.generation)
+                "end" -> {
+                    player.finish(event.generation)
+                    applyAction(stateMachine.onPlaybackEnded())
+                    syncState()
+                }
+                "cancel" -> {
+                    player.cancel(event.generation)
+                    applyAction(stateMachine.onPlaybackEnded())
+                    syncState()
+                }
             }
             is PcEvent.Chime -> player.chime(event.generation)
             is PcEvent.StartApprovalCapture -> startApprovalCapture()
@@ -276,8 +395,9 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
         client.cancelPlayback(generation)
         client.startCapture()
         client.sendAudio(preRoll, preRoll.size)
+        stateMachine.onPlaybackInterrupted()
         main.post {
-            update { it.copy(capturing = true, error = "", status = "Interrupted — listening...") }
+            syncState { it.copy(error = "", status = "Interrupted — listening...") }
         }
     }
 

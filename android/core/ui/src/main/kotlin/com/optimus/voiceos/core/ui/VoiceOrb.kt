@@ -61,6 +61,10 @@ fun VoiceOrb(
     modifier: Modifier = Modifier,
     size: Dp = 140.dp,
     isCapturing: Boolean = false,
+    conversationEnabled: Boolean = false,
+    onGestureStart: (() -> Unit)? = null,
+    onGestureEnd: ((elapsedMs: Long) -> Unit)? = null,
+    onGestureCancel: (() -> Unit)? = null,
     onStartCapture: (() -> Unit)? = null,
     onStopCapture: (() -> Unit)? = null,
     onClick: (() -> Unit)? = null
@@ -129,30 +133,23 @@ fun VoiceOrb(
     val interactionSource = remember { MutableInteractionSource() }
 
     val touchModifier = when {
+        onGestureStart != null && onGestureEnd != null -> {
+            Modifier.voiceGesture(
+                onGestureStart = onGestureStart,
+                onGestureEnd = onGestureEnd,
+                onGestureCancel = onGestureCancel ?: {}
+            )
+        }
         onStartCapture != null && onStopCapture != null -> {
-            Modifier.pointerInput(isCapturing, onStartCapture, onStopCapture) {
-                detectTapGestures(
-                    onPress = {
-                        val downTime = System.currentTimeMillis()
-                        if (isCapturing) {
-                            onStopCapture()
-                            tryAwaitRelease()
-                        } else {
-                            onStartCapture()
-                            val released = tryAwaitRelease()
-                            val elapsed = System.currentTimeMillis() - downTime
-                            if (released && elapsed > 300) {
-                                // User held down to talk and released
-                                onStopCapture()
-                            } else if (!released) {
-                                // Cancelled / dragged off
-                                onStopCapture()
-                            }
-                            // Otherwise user quick-tapped (<= 300ms): keep capturing active for hands-free dictation
-                        }
+            Modifier.voiceGesture(
+                onGestureStart = onStartCapture,
+                onGestureEnd = { elapsed ->
+                    if (elapsed > 300) {
+                        onStopCapture()
                     }
-                )
-            }
+                },
+                onGestureCancel = onStopCapture
+            )
         }
         onClick != null -> {
             Modifier.clickable(

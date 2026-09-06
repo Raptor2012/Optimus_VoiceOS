@@ -82,11 +82,14 @@ fun TalkUiState.toVoiceOrbState(): VoiceOrbState {
     return when {
         error.isNotBlank() -> VoiceOrbState.Error
         sending -> VoiceOrbState.Sending
+        playbackActive || status.contains("Speaking", ignoreCase = true) -> VoiceOrbState.ReadingDraft
+        userUtteranceInProgress -> VoiceOrbState.Listening
+        conversationEnabled && audioDeviceRunning -> VoiceOrbState.SessionListening
         capturing -> VoiceOrbState.Listening
         sendSummary.startsWith("Sent to") -> VoiceOrbState.Sent
-        status.contains("Speaking", ignoreCase = true) -> VoiceOrbState.ReadingDraft
         status.contains("approval", ignoreCase = true) -> VoiceOrbState.AwaitingApproval
-        status.contains("Processing", ignoreCase = true) ||
+        desktopRequestRunning ||
+            status.contains("Processing", ignoreCase = true) ||
             status.contains("Transcribing", ignoreCase = true) ||
             status.contains("waiting for draft", ignoreCase = true) -> VoiceOrbState.Processing
         status.contains("new draft", ignoreCase = true) -> VoiceOrbState.Redictating
@@ -113,7 +116,12 @@ data class TalkUiState(
     val sendSummary: String = "",
     val error: String = "",
     val narrationMode: String = "concise",
-    val narrateToolsAndSkills: Boolean = false
+    val narrateToolsAndSkills: Boolean = false,
+    val conversationEnabled: Boolean = false,
+    val audioDeviceRunning: Boolean = false,
+    val userUtteranceInProgress: Boolean = false,
+    val playbackActive: Boolean = false,
+    val desktopRequestRunning: Boolean = false
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,8 +132,12 @@ fun TalkScreen(
     onPortChange: (String) -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onStartCapture: () -> Unit,
-    onStopCapture: () -> Unit,
+    onStartCapture: () -> Unit = {},
+    onStopCapture: () -> Unit = {},
+    onGestureStart: () -> Unit = onStartCapture,
+    onGestureEnd: (Long) -> Unit = { elapsed -> if (elapsed > 300) onStopCapture() },
+    onGestureCancel: () -> Unit = onStopCapture,
+    onEndConversation: () -> Unit = {},
     onDraftChange: (String) -> Unit = {},
     onSelectDestination: (String) -> Unit = {},
     onRefreshDestinations: () -> Unit = {},
@@ -277,24 +289,61 @@ fun TalkScreen(
             VoiceOrb(
                 state = state.toVoiceOrbState(),
                 size = 148.dp,
-                isCapturing = state.capturing,
-                onStartCapture = onStartCapture,
-                onStopCapture = onStopCapture
+                isCapturing = state.userUtteranceInProgress,
+                conversationEnabled = state.conversationEnabled,
+                onGestureStart = onGestureStart,
+                onGestureEnd = onGestureEnd,
+                onGestureCancel = onGestureCancel
             )
+
+            // If continuous conversation mode is enabled, show an End action
+            if (state.conversationEnabled) {
+                OutlinedButton(
+                    onClick = onEndConversation,
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = OptimusTokens.MinTouchTarget),
+                    shape = OptimusTokens.CornerControl,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = OptimusTokens.Error
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "End conversation",
+                        modifier = Modifier.size(16.dp),
+                        tint = OptimusTokens.Error
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "End Conversation",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = OptimusTokens.Error
+                    )
+                }
+            }
 
             // Current voice status prompt
             Text(
                 text = when {
-                    state.capturing -> "Recording — Release or tap to stop"
+                    state.playbackActive || state.status.contains("Speaking", ignoreCase = true) -> "Speaking..."
+                    state.userUtteranceInProgress -> "Recording — Release or tap to stop"
+                    state.conversationEnabled -> "Conversation active — listening"
+                    state.desktopRequestRunning -> "Sent to PC, waiting for draft..."
                     state.status.isNotBlank() &&
                         !state.status.equals("Listening...", ignoreCase = true) &&
                         !state.status.equals("Recording...", ignoreCase = true) -> state.status
-                    state.connected -> "Hold to speak, or tap to toggle"
+                    state.connected -> "Hold to speak, or tap for continuous conversation"
                     else -> "Connect to PC to talk"
                 },
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (state.capturing) OptimusTokens.Listening else OptimusTokens.TextPrimary
+                color = when {
+                    state.playbackActive -> OptimusTokens.Reading
+                    state.userUtteranceInProgress -> OptimusTokens.Listening
+                    state.conversationEnabled -> OptimusTokens.Success
+                    else -> OptimusTokens.TextPrimary
+                }
             )
 
             // 3. CURRENT DECISION CARD (If Pending)

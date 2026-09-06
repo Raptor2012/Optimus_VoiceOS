@@ -17,6 +17,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
@@ -36,7 +37,7 @@ import com.optimus.voiceos.ui.theme.OptimusTokens
  * (e.g. on Projects or Updates).
  *
  * Keeps active voice context reachable in one tap, showing the locked destination, current status,
- * and quick-talk controls.
+ * and quick-talk controls with full push-to-talk, continuous conversation, and cancel gesture semantics.
  */
 @Composable
 fun CompactConversationCapsule(
@@ -44,8 +45,13 @@ fun CompactConversationCapsule(
     statusText: String,
     orbState: VoiceOrbState,
     isCapturing: Boolean,
+    conversationEnabled: Boolean = false,
     onCapsuleClick: () -> Unit,
-    onQuickMicClick: () -> Unit,
+    onQuickMicClick: (() -> Unit)? = null,
+    onGestureStart: (() -> Unit)? = null,
+    onGestureEnd: ((elapsedMs: Long) -> Unit)? = null,
+    onGestureCancel: (() -> Unit)? = null,
+    onEndConversation: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -102,38 +108,69 @@ fun CompactConversationCapsule(
                 Text(
                     text = statusText.ifBlank { "Tap to open talk view" },
                     fontSize = 11.sp,
-                    color = if (isCapturing) OptimusTokens.Listening else OptimusTokens.TextSecondary,
+                    color = when {
+                        isCapturing -> OptimusTokens.Listening
+                        conversationEnabled -> OptimusTokens.Success
+                        else -> OptimusTokens.TextSecondary
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
+            // End continuous conversation button when active
+            if (conversationEnabled && onEndConversation != null) {
+                IconButton(
+                    onClick = onEndConversation,
+                    modifier = Modifier.size(OptimusTokens.MinTouchTarget)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "End conversation",
+                        tint = OptimusTokens.Error,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
             // Quick capture / mic action button (minimum 48dp touch target)
+            val micModifier = if (onGestureStart != null && onGestureEnd != null) {
+                Modifier.voiceGesture(
+                    onGestureStart = onGestureStart,
+                    onGestureEnd = onGestureEnd,
+                    onGestureCancel = onGestureCancel ?: {}
+                )
+            } else if (onQuickMicClick != null) {
+                Modifier.clickable(onClick = onQuickMicClick)
+            } else Modifier
+
             Box(
                 modifier = Modifier
                     .size(OptimusTokens.MinTouchTarget)
                     .clip(CircleShape)
                     .background(
-                        if (isCapturing) OptimusTokens.Listening.copy(alpha = 0.2f)
-                        else OptimusTokens.SurfaceHighlight
-                    ),
+                        when {
+                            isCapturing -> OptimusTokens.Listening.copy(alpha = 0.2f)
+                            conversationEnabled -> OptimusTokens.Success.copy(alpha = 0.2f)
+                            else -> OptimusTokens.SurfaceHighlight
+                        }
+                    )
+                    .then(micModifier),
                 contentAlignment = Alignment.Center
             ) {
-                IconButton(
-                    onClick = onQuickMicClick,
-                    modifier = Modifier.size(OptimusTokens.MinTouchTarget)
-                ) {
-                    // Visual recording indicator / mic wave
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (isCapturing) OptimusTokens.Listening
-                                else OptimusTokens.Accent
-                            )
-                    )
-                }
+                // Visual recording indicator / mic wave
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                isCapturing -> OptimusTokens.Listening
+                                conversationEnabled -> OptimusTokens.Success
+                                else -> OptimusTokens.Accent
+                            }
+                        )
+                )
             }
         }
     }
