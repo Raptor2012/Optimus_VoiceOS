@@ -28,7 +28,16 @@ public sealed record HeadlessChatResult(
     string? ConversationId,
     string? Error = null)
 {
-    public string Text => string.Join("", Events.Where(item => item.Kind == HeadlessChatEventKind.Text).Select(item => item.Text));
+    public string Text
+    {
+        get
+        {
+            string incremental = string.Join("", Events.Where(item => item.Kind == HeadlessChatEventKind.Text).Select(item => item.Text));
+            return !string.IsNullOrEmpty(incremental)
+                ? incremental
+                : string.Join("", Events.Where(item => item.Kind == HeadlessChatEventKind.Completed).Select(item => item.Text));
+        }
+    }
 }
 
 public sealed record HeadlessProcessStart(
@@ -64,22 +73,59 @@ public sealed class SystemStructuredChatProcess : IStructuredChatProcess
 
         using var process = new Process { StartInfo = info };
         if (!process.Start()) throw new InvalidOperationException($"Could not start {start.Executable}.");
-        await process.StandardInput.WriteLineAsync(start.Input).ConfigureAwait(false);
-        await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
-        process.StandardInput.Close();
-
-        while (!process.StandardOutput.EndOfStream)
+        try
         {
-            string? line = await process.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is not null) yield return line;
-        }
+            await process.StandardInput.WriteLineAsync(start.Input).ConfigureAwait(false);
+            await process.StandardInput.FlushAsync(cancellationToken).ConfigureAwait(false);
+            process.StandardInput.Close();
 
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        if (process.ExitCode != 0)
-        {
-            string error = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(error)) yield return JsonSerializer.Serialize(new { type = "error", error });
+            // Drain both pipes concurrently. Waiting for stdout before reading stderr can
+            // deadlock a CLI that emits enough diagnostics to fill its stderr pipe.
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            Task waitTask = process.WaitForExitAsync(cancellationToken);
+            try
+            {
+                await Task.WhenAll(stdoutTask, stderrTask, waitTask).ConfigureAwait(false);
+            }
+            catch
+            {
+                StopProcess(process);
+                await WaitForExitAfterStopAsync(process).ConfigureAwait(false);
+                throw;
+            }
+
+            foreach (string line in stdoutTask.Result.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+                yield return line;
+            if (process.ExitCode != 0)
+            {
+                string error = stderrTask.Result.Trim();
+                if (string.IsNullOrWhiteSpace(error)) error = $"{start.Executable} exited with code {process.ExitCode}.";
+                yield return JsonSerializer.Serialize(new { type = "error", error });
+            }
         }
+        finally
+        {
+            StopProcess(process);
+        }
+    }
+
+    private static void StopProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // The process exited between HasExited and Kill.
+        }
+    }
+
+    private static async Task WaitForExitAfterStopAsync(Process process)
+    {
+        try { await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
+        catch (InvalidOperationException) { }
     }
 }
 

@@ -98,6 +98,9 @@ public sealed class ExecutionPolicyCoordinator
     public PlanStartResult ApproveAndStart(string planId, int revision, IReadOnlyList<ExecutionTask> tasks)
     {
         ArgumentNullException.ThrowIfNull(tasks);
+        ExecutionPlanRevision? plan = _plans.Get(planId, revision);
+        if (plan is null || plan.State != PlanRevisionState.PendingApproval || !MatchesApprovedCards(plan.Tasks, tasks))
+            return new(false, Array.Empty<ScheduleDecision>(), "Tasks must exactly match the displayed pending plan revision.");
         if (!_plans.Approve(planId, revision))
             return new(false, Array.Empty<ScheduleDecision>(), "Only the displayed pending revision can be approved.");
 
@@ -108,6 +111,25 @@ public sealed class ExecutionPolicyCoordinator
 
     public bool RequestChanges(string planId, int revision, string feedback) =>
         _plans.RequestChanges(planId, revision, feedback);
+
+    private static bool MatchesApprovedCards(IReadOnlyList<PlanTaskCard> cards, IReadOnlyList<ExecutionTask> tasks)
+    {
+        if (cards.Count != tasks.Count || cards.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != cards.Count ||
+            tasks.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != tasks.Count) return false;
+        foreach (PlanTaskCard card in cards)
+        {
+            ExecutionTask? task = tasks.FirstOrDefault(candidate =>
+                string.Equals(candidate.Id, card.Id, StringComparison.Ordinal));
+            if (task is null || !SameKeys(task.DependsOn, card.DependsOn) || !SameKeys(task.OwnershipKeys, card.OwnershipKeys))
+                return false;
+            if (card.Role.HasValue && card.Role.Value != task.Role) return false;
+            if (card.Provider.HasValue && card.Provider.Value != task.Provider) return false;
+        }
+        return true;
+    }
+
+    private static bool SameKeys(IReadOnlyList<string> left, IReadOnlyList<string> right) =>
+        left.Count == right.Count && left.All(item => right.Contains(item, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>Applies the 5% checkpoint rule and deliberately treats absent quota as unknown.</summary>

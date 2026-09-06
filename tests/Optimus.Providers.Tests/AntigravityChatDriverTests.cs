@@ -59,4 +59,17 @@ public sealed class AntigravityChatDriverTests
         Assert.Equal("quota exceeded", result.Error);
         Assert.Contains(result.Events, item => item.Kind == HeadlessChatEventKind.Error);
     }
+
+    [Fact]
+    public async Task Driver_PreservesResultOnlyResponse()
+    {
+        var process = new FixtureProcess(["{\"type\":\"result\",\"conversation_id\":\"conv-8\",\"result\":\"Only final response\"}"]);
+        var driver = new AntigravityChatDriver(process);
+
+        HeadlessChatResult result = await driver.SendAsync(new("Continue"));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Only final response", result.Text);
+        Assert.Equal("conv-8", result.ConversationId);
+    }
 }
