@@ -32,7 +32,11 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:ui"))
+    implementation(project(":core:transport"))
     implementation(project(":feature:talk"))
+    implementation(project(":feature:projects"))
+    implementation(project(":feature:updates"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
