@@ -8,5 +8,6 @@
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
     <!-- S002: Parakeet 0.6B STT via sherpa-onnx. Gemma 4 cleanup runs out of process (llama-server). -->
     <PackageVersion Include="org.k2fsa.sherpa.onnx" Version="1.13.5" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="8.0.10" />
   </ItemGroup>
 </Project>
