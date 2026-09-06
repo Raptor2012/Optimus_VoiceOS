@@ -13,6 +13,7 @@ using System.Windows;
 using System.Windows.Input;
 using Optimus.Core.Audio;
 using Optimus.Core.Narration;
+using Optimus.Core.Pipeline;
 using Optimus.Core.Speech;
 using Optimus.Core.Voice;
 using Optimus.Inference;
@@ -26,6 +27,7 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     private PushToTalkController? _controller;
     private DestinationRegistry? _registry;
     private VoicePipeline? _pipeline;
+    private PipelineOrchestrator? _orchestrator;
     private CancellationTokenSource? _processingCts;
     private int _utteranceGeneration;
     private WidgetState _state = WidgetState.Idle;
@@ -536,6 +538,10 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
     /// widget reports the captured audio only.</summary>
     public void AttachPipeline(VoicePipeline pipeline) =>
         _pipeline = pipeline ?? throw new ArgumentNullException(nameof(pipeline));
+
+    /// <summary>Connects the production voice capture path to the full local turn orchestrator.</summary>
+    public void AttachOrchestrator(PipelineOrchestrator orchestrator) =>
+        _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
 
     /// <summary>
     /// Supplies the spoken-review player. Without one the widget stays fully usable and simply
@@ -1364,6 +1370,21 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
 
         double seconds = audioBytes.Length / 32000.0;
 
+        if (_orchestrator != null)
+        {
+            int orchestrationGeneration = 0;
+            CancellationToken orchestrationToken = default;
+            _dispatchAction(() =>
+            {
+                orchestrationGeneration = BeginNewUtterance();
+                _draftOriginPhone = false;
+                orchestrationToken = _processingCts!.Token;
+                OpenSession();
+            });
+            ProcessOrchestratedAudio(audioBytes, orchestrationGeneration, orchestrationToken);
+            return;
+        }
+
         if (_pipeline == null)
         {
             _dispatchAction(() =>
@@ -1391,9 +1412,66 @@ public sealed partial class WidgetViewModel : INotifyPropertyChanged, IDisposabl
         ProcessAudioBytes(audioBytes, generation, token);
     }
 
+    private void ProcessOrchestratedAudio(byte[] audioBytes, int generation, CancellationToken token)
+    {
+        _dispatchAction(() =>
+        {
+            if (!IsCurrent(generation)) return;
+            State = WidgetState.Processing;
+            RawTranscript = string.Empty;
+            DraftText = string.Empty;
+            StageTimings = string.Empty;
+            StatusLine = "Running local desktop operator...";
+        });
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                PipelineResult result = await _orchestrator!.ProcessAsync(
+                    new PipelineRequest(audioBytes, OriginDevice: "pc"), token).ConfigureAwait(false);
+                _dispatchAction(() =>
+                {
+                    if (!IsCurrent(generation)) return;
+                    RawTranscript = result.Transcript;
+                    DraftText = result.Response;
+                    StageTimings = string.Join(" · ", result.Latency.Stages
+                        .Where(pair => pair.Key != PipelineStage.Total)
+                        .Select(pair => $"{pair.Key} {pair.Value.ElapsedMilliseconds} ms")) +
+                        $" · total {result.Latency.TotalMilliseconds} ms";
+                    ErrorMessage = result.Succeeded ? string.Empty : result.Response;
+                    State = result.Succeeded ? WidgetState.Sent : WidgetState.Error;
+                    StatusLine = result.Succeeded ? result.Response : "Operator request needs attention";
+                    if (result.Succeeded) LastSentText = result.Decision.Message;
+                    _controller?.Start();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                _dispatchAction(() =>
+                {
+                    if (!IsCurrent(generation)) return;
+                    ErrorMessage = ex.Message;
+                    State = WidgetState.Error;
+                    StatusLine = "Operator request failed";
+                    _controller?.Start();
+                });
+            }
+        }, token);
+    }
+
     private void ProcessAudioBytes(byte[] audioBytes, int generation, CancellationToken token)
     {
         double seconds = audioBytes.Length / 32000.0;
+
+        if (_orchestrator != null)
+        {
+            ProcessOrchestratedAudio(audioBytes, generation, token);
+            return;
+        }
 
         _dispatchAction(() =>
         {

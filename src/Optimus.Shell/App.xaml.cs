@@ -5,10 +5,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using Optimus.Core.Audio;
+using Optimus.Core.Conversation;
 using Optimus.Core.Digests;
 using Optimus.Core.Hotkeys;
 using Optimus.Core.Phone;
 using Optimus.Core.Narration;
+using Optimus.Core.Pipeline;
 using Optimus.Core.Speech;
 using Optimus.Core.Voice;
 using Optimus.Inference;
@@ -23,6 +25,10 @@ using Optimus.Shell.ViewModels;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable", Justification = "WPF Application lifecycle cleans up disposable resources in OnExit")]
 public partial class App : Application
 {
+    private static readonly string[] CodexAliases = { "codex", "chatgpt" };
+    private static readonly string[] ClaudeAliases = { "claude", "claude desktop" };
+    private static readonly string[] AntigravityAliases = { "antigravity", "gemini" };
+    private static readonly string[] AoAliases = { "ao", "orchestrator" };
     private IAudioCaptureService? _audioCaptureService;
     private EchoCanceller? _echoCanceller;
     private IHotkeyService? _hotkeyService;
@@ -40,6 +46,7 @@ public partial class App : Application
     private PiperSpeechSynthesizer? _ttsSynthesizer;
     private AgentNarrationCoordinator? _narration;
     private DigestScheduler? _digestScheduler;
+    private PipelineOrchestrator? _orchestrator;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -149,6 +156,30 @@ public partial class App : Application
                     Dispatcher.Invoke(() => viewModel.SetSpeechReady($"Voice unavailable: {ex.Message}"));
                 }
             });
+        }
+
+        // The shipped capture path uses the same warm Parakeet/Gemma process as the draft UI,
+        // but now hands ordinary natural-language turns to the complete local operator. The
+        // coordinator still owns target resolution and confirmation safeguards.
+        if (_pipeline?.LocalModelClient != null && _ttsSynthesizer != null)
+        {
+            var resolver = new ContextResolver(new[]
+            {
+                new ContextTarget("codex", "Codex", CodexAliases),
+                new ContextTarget("claude", "Claude", ClaudeAliases),
+                new ContextTarget("antigravity", "Antigravity", AntigravityAliases),
+                new ContextTarget("ao", "Agent Orchestrator", AoAliases)
+            });
+            var routerExecutor = new ProviderRouterActionExecutor(new ProviderRouter());
+            _orchestrator = new PipelineOrchestrator(
+                _pipeline.Transcriber,
+                new ConversationCoordinator(resolver),
+                _pipeline.LocalModelClient,
+                routerExecutor,
+                routerExecutor,
+                new PiperNarrator(_ttsSynthesizer),
+                log: message => System.Diagnostics.Trace.WriteLine(message));
+            _viewModel.AttachOrchestrator(_orchestrator);
         }
 
         // The phone endpoint. --no-phone skips it; it binds a LAN/Tailscale-reachable port and
