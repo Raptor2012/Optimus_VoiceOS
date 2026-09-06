@@ -8,6 +8,9 @@
     <ProjectReference Include="..\Optimus.Providers\Optimus.Providers.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- The WASAPI interop structs and the packet-drain loop are unit tested directly. -->
     <InternalsVisibleTo Include="Optimus.Core.Tests" />
   </ItemGroup>
