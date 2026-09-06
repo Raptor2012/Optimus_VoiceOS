@@ -45,6 +45,7 @@ class TtsAudioPlayer internal constructor(
     @Volatile private var sink: StreamingPcmSink? = null
     @Volatile var isActive = false
         private set
+    val activeGeneration: Long get() = generation
     private var nextSequence = 0
 
     fun start(newGeneration: Long) {

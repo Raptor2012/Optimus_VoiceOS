@@ -332,6 +332,11 @@ class PhoneClient(private val onEvent: (PcEvent) -> Unit) {
         JSONObject().put("t", "playbackDrained").put("generation", generation)
     )
 
+    /** User speech interrupted local playback; invalidate the matching PC-side wait as well. */
+    fun cancelPlayback(generation: Long) = sendJson(
+        JSONObject().put("t", "interruptPlayback").put("generation", generation)
+    )
+
     fun setNarrationSettings(mode: String, narrateToolsAndSkills: Boolean) = sendJson(
         JSONObject().put("t", "narrationSettings")
             .put("mode", mode)

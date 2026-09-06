@@ -20,21 +20,29 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
     private val client = PhoneClient { event -> main.post { handle(event) } }
 
-    private val mic = MicCapture { pcm, length ->
+    private val mic = MicCapture({ pcm, length ->
         // Straight out to the PC; nothing is accumulated on the phone.
         client.sendAudio(pcm, length)
-    }
+    }, onSpeechStart = { preRoll ->
+        if (player.isActive) interruptPlayback(preRoll)
+    })
 
-    private val player = TtsAudioPlayer(
-        onActiveChanged = { active -> main.post {
-            if (active) {
-                mic.stop()
-                update { it.copy(capturing = false, status = "Speaking...") }
-            }
-        } },
-        onDrained = client::playbackDrained,
-        onFailure = { message -> main.post { update { it.copy(error = message, status = "Playback failed") } } }
-    )
+    private lateinit var player: TtsAudioPlayer
+
+    init {
+        player = TtsAudioPlayer(
+            onActiveChanged = { active -> main.post {
+                if (active) {
+                    // Keep the AEC/VAD microphone hot during playback.  Speech onset cancels the
+                    // current generation and promotes the 300 ms pre-roll to a new utterance.
+                    if (!mic.isRecording) mic.start()
+                    update { it.copy(capturing = true, status = "Speaking...") }
+                }
+            } },
+            onDrained = client::playbackDrained,
+            onFailure = { message -> main.post { update { it.copy(error = message, status = "Playback failed") } } }
+        )
+    }
 
     var onProjectsReceived: ((List<com.optimus.voiceos.core.transport.PcProjectItem>) -> Unit)? = null
 
@@ -133,10 +141,6 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 
     fun startCapture() {
-        if (player.isActive) {
-            update { it.copy(error = "Wait for speech playback to finish") }
-            return
-        }
         if (!client.isConnected) {
             update { it.copy(error = "Not connected") }
             return
@@ -168,7 +172,6 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 
     private fun startApprovalCapture() {
-        if (player.isActive) return
         if (!client.isConnected) return
         if (!mic.start()) {
             update { it.copy(error = "Microphone unavailable") }
@@ -183,7 +186,6 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
     }
 
     private fun startRedictationCapture() {
-        if (player.isActive) return
         if (!client.isConnected) return
         if (!mic.start()) {
             update { it.copy(error = "Microphone unavailable") }
@@ -249,7 +251,10 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
 
             is PcEvent.TtsAudio -> player.enqueue(event.segment)
             is PcEvent.Playback -> when (event.state) {
-                "start" -> player.start(event.generation)
+                "start" -> {
+                    player.start(event.generation)
+                    if (!mic.isRecording) mic.start()
+                }
                 "end" -> player.finish(event.generation)
                 "cancel" -> player.cancel(event.generation)
             }
@@ -259,6 +264,20 @@ class TalkController(private val onState: (TalkUiState) -> Unit) {
             is PcEvent.StartRedictationCapture -> startRedictationCapture()
             is PcEvent.DestinationSelected -> update { it.copy(selectedDestinationId = event.destinationId) }
             is PcEvent.AgentUpdate -> update { it.copy(status = event.text) }
+        }
+    }
+
+    private fun interruptPlayback(preRoll: ByteArray) {
+        val generation = player.activeGeneration
+        if (!player.isActive || generation < 0L || !client.isConnected) return
+
+        // Invalidate local queued frames and the PC's wait for playback completion immediately.
+        player.cancel(generation)
+        client.cancelPlayback(generation)
+        client.startCapture()
+        client.sendAudio(preRoll, preRoll.size)
+        main.post {
+            update { it.copy(capturing = true, error = "", status = "Interrupted — listening...") }
         }
     }
 

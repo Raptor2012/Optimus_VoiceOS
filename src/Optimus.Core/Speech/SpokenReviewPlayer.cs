@@ -88,6 +88,7 @@ public sealed record SpokenReviewResult(
 public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
 {
     private readonly PiperSpeechSynthesizer _synthesizer;
+    private readonly EchoCanceller? _echoCanceller;
     private readonly bool _ownsSynthesizer;
     private readonly object _lock = new();
 
@@ -100,10 +101,14 @@ public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
     {
     }
 
-    public SpokenReviewPlayer(PiperSpeechSynthesizer synthesizer, bool ownsSynthesizer = false)
+    public SpokenReviewPlayer(
+        PiperSpeechSynthesizer synthesizer,
+        bool ownsSynthesizer = false,
+        EchoCanceller? echoCanceller = null)
     {
         _synthesizer = synthesizer ?? throw new ArgumentNullException(nameof(synthesizer));
         _ownsSynthesizer = ownsSynthesizer;
+        _echoCanceller = echoCanceller;
     }
 
     /// <summary>True while audio is being synthesized or played. Capture must stay closed.</summary>
@@ -285,7 +290,7 @@ public sealed class SpokenReviewPlayer : ISpokenReview, IDisposable
         {
             if (_player == null)
             {
-                _player = new WaveOutPlayer(sampleRate);
+                _player = new WaveOutPlayer(sampleRate, pcm => _echoCanceller?.RenderPlayback(pcm.Span));
                 _player.Open();
             }
 

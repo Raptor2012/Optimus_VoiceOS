@@ -12,15 +12,18 @@ using System.Threading.Tasks;
 
 public sealed class PhoneConnectionEventArgs : EventArgs
 {
-    public PhoneConnectionEventArgs(bool connected, string remote)
+    public PhoneConnectionEventArgs(bool connected, string remote, long cursor = 0)
     {
         Connected = connected;
         Remote = remote;
+        Cursor = cursor;
     }
 
     public bool Connected { get; }
 
     public string Remote { get; }
+
+    public long Cursor { get; }
 }
 
 /// <summary>The phone asked to send the exact text it was showing.</summary>
@@ -144,6 +147,9 @@ public sealed class PhoneEndpoint : IDisposable
     /// <summary>The phone has played every PCM frame for this generation.</summary>
     public event EventHandler<PhonePlaybackDrainedEventArgs>? PlaybackDrained;
 
+    /// <summary>The phone detected user speech while this playback generation was active.</summary>
+    public event EventHandler<PhonePlaybackDrainedEventArgs>? PlaybackInterrupted;
+
     public event EventHandler<PhoneNarrationSettingsEventArgs>? NarrationSettingsChanged;
 
     /// <summary>The phone selected a destination.</summary>
@@ -156,6 +162,7 @@ public sealed class PhoneEndpoint : IDisposable
     public event EventHandler<PhoneApprovalResolutionEventArgs>? ApprovalResolved;
 
     private long _playbackGeneration;
+    private readonly ConnectionEventCursor _connectionCursor = new();
 
     public long NextPlaybackGeneration() => Interlocked.Increment(ref _playbackGeneration);
 
@@ -216,13 +223,14 @@ public sealed class PhoneEndpoint : IDisposable
             }
 
             client.NoDelay = true;
-            ConnectionChanged?.Invoke(this, new PhoneConnectionEventArgs(true, remote));
+            long connectionCursor = _connectionCursor.Advance();
+            ConnectionChanged?.Invoke(this, new PhoneConnectionEventArgs(true, remote, connectionCursor));
 
-            await ReceiveLoopAsync(remote, cancellationToken).ConfigureAwait(false);
+            await ReceiveLoopAsync(remote, connectionCursor, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task ReceiveLoopAsync(string remote, CancellationToken cancellationToken)
+    private async Task ReceiveLoopAsync(string remote, long connectionCursor, CancellationToken cancellationToken)
     {
         NetworkStream? stream;
         lock (_lock)
@@ -273,7 +281,7 @@ public sealed class PhoneEndpoint : IDisposable
         finally
         {
             CloseCurrentClient();
-            ConnectionChanged?.Invoke(this, new PhoneConnectionEventArgs(false, remote));
+            ConnectionChanged?.Invoke(this, new PhoneConnectionEventArgs(false, remote, connectionCursor));
         }
     }
 
@@ -322,6 +330,10 @@ public sealed class PhoneEndpoint : IDisposable
 
             case "playbackDrained":
                 RaisePlaybackDrained(json);
+                break;
+
+            case "interruptPlayback":
+                RaisePlaybackInterrupted(json);
                 break;
 
             case "narrationSettings":
@@ -375,6 +387,22 @@ public sealed class PhoneEndpoint : IDisposable
                 value.TryGetInt64(out long generation) && generation >= 0)
             {
                 PlaybackDrained?.Invoke(this, new PhonePlaybackDrainedEventArgs(generation));
+            }
+        }
+        catch (JsonException)
+        {
+        }
+    }
+
+    private void RaisePlaybackInterrupted(string json)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("generation", out JsonElement value) &&
+                value.TryGetInt64(out long generation) && generation >= 0)
+            {
+                PlaybackInterrupted?.Invoke(this, new PhonePlaybackDrainedEventArgs(generation));
             }
         }
         catch (JsonException)

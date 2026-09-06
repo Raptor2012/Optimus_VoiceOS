@@ -24,6 +24,7 @@ using Optimus.Shell.ViewModels;
 public partial class App : Application
 {
     private IAudioCaptureService? _audioCaptureService;
+    private EchoCanceller? _echoCanceller;
     private IHotkeyService? _hotkeyService;
     private PushToTalkController? _controller;
     private WidgetViewModel? _viewModel;
@@ -60,7 +61,8 @@ public partial class App : Application
         bool useMock = e.Args.Contains("--mock");
         string? manualDraft = GetOptionValue(e.Args, "--draft");
 
-        _audioCaptureService = useMock ? new InMemoryAudioCapture() : new WasapiAudioCapture();
+        _echoCanceller = new EchoCanceller();
+        _audioCaptureService = useMock ? new InMemoryAudioCapture() : new WasapiAudioCapture(_echoCanceller);
         _hotkeyService = useMock ? new MockHotkeyService() : new WindowsKeyboardHook();
 
         _controller = new PushToTalkController(_hotkeyService, _audioCaptureService);
@@ -127,7 +129,7 @@ public partial class App : Application
         {
             WidgetViewModel viewModel = _viewModel;
             _ttsSynthesizer = new PiperSpeechSynthesizer();
-            _speech = new SpokenReviewPlayer(_ttsSynthesizer);
+            _speech = new SpokenReviewPlayer(_ttsSynthesizer, echoCanceller: _echoCanceller);
             _viewModel.AttachSpeech(_speech);
 
             SpokenReviewPlayer speech = _speech;
@@ -215,6 +217,7 @@ public partial class App : Application
             {
                 _phoneSpeech = new PhoneSpokenReview(_ttsSynthesizer, _phoneEndpoint);
                 _viewModel.AttachPhoneSpeech(_phoneSpeech);
+                _phoneEndpoint.PlaybackInterrupted += OnPhonePlaybackInterrupted;
             }
             _phoneApprovalListener = new PhoneApprovalListener(_phoneEndpoint);
             _viewModel.AttachPhoneApprovalListener(_phoneApprovalListener);
@@ -354,6 +357,7 @@ public partial class App : Application
         if (_phoneEndpoint != null)
         {
             _phoneEndpoint.NarrationSettingsChanged -= OnPhoneNarrationSettingsChanged;
+            _phoneEndpoint.PlaybackInterrupted -= OnPhonePlaybackInterrupted;
         }
         _phoneEndpoint?.Dispose();
         _viewModel?.Dispose();
@@ -361,6 +365,7 @@ public partial class App : Application
         _controller?.Dispose();
         _hotkeyService?.Dispose();
         _audioCaptureService?.Dispose();
+        _echoCanceller?.Dispose();
 
         base.OnExit(e);
     }
@@ -391,5 +396,13 @@ public partial class App : Application
                 : NarrationMode.Concise;
             _viewModel.NarrateToolsAndSkills = e.NarrateToolsAndSkills;
         });
+    }
+
+    private void OnPhonePlaybackInterrupted(object? sender, PhonePlaybackDrainedEventArgs e)
+    {
+        if (_phoneSpeech?.IsSpeaking == true && e.Generation == _phoneEndpoint?.CurrentPlaybackGeneration)
+        {
+            _phoneSpeech.Cancel();
+        }
     }
 }

@@ -23,15 +23,17 @@ public sealed class WaveOutPlayer : IDisposable
     private readonly object _lock = new();
     private readonly List<IntPtr> _headers = new();
     private readonly int _sampleRate;
+    private readonly Action<ReadOnlyMemory<byte>>? _playbackReference;
 
     private IntPtr _device = IntPtr.Zero;
     private int _queuedBuffers;
     private bool _disposed;
 
-    public WaveOutPlayer(int sampleRate)
+    public WaveOutPlayer(int sampleRate, Action<ReadOnlyMemory<byte>>? playbackReference = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
         _sampleRate = sampleRate;
+        _playbackReference = playbackReference;
     }
 
     public bool IsOpen
@@ -101,6 +103,10 @@ public sealed class WaveOutPlayer : IDisposable
         {
             return;
         }
+
+        // This is the exact PCM submitted to the output device, not synthesized source audio or
+        // a timing estimate.  AEC receives it before waveOut begins consuming the buffer.
+        _playbackReference?.Invoke(new ReadOnlyMemory<byte>(pcm, 0, count));
 
         lock (_lock)
         {

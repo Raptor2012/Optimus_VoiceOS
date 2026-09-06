@@ -13,6 +13,8 @@ using Optimus.Core.Audio.Wasapi;
 /// </summary>
 public sealed class WasapiAudioCapture : IAudioCaptureService
 {
+    private readonly EchoCanceller _echoCanceller;
+    private readonly bool _ownsEchoCanceller;
     private readonly object _lock = new();
     private MemoryStream? _inMemoryBuffer;
     private Thread? _captureThread;
@@ -49,6 +51,12 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
     public event EventHandler<CaptureStateChangedEventArgs>? StateChanged;
     public event EventHandler<CaptureErrorEventArgs>? ErrorOccurred;
     public event EventHandler<AudioChunkEventArgs>? AudioChunkAvailable;
+
+    public WasapiAudioCapture(EchoCanceller? echoCanceller = null)
+    {
+        _echoCanceller = echoCanceller ?? new EchoCanceller();
+        _ownsEchoCanceller = echoCanceller == null;
+    }
 
     public void StartCapture()
     {
@@ -96,8 +104,6 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
     public byte[] StopCapture()
     {
         MemoryStream? bufferToProcess;
-        WaveFormatInfo format;
-
         lock (_lock)
         {
             if (!_isCapturing)
@@ -109,7 +115,6 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             _stopSignal?.Set();
             bufferToProcess = _inMemoryBuffer;
             _inMemoryBuffer = null;
-            format = _format;
         }
 
         try
@@ -127,23 +132,21 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             StateChanged?.Invoke(this, new CaptureStateChangedEventArgs(false, "Capture stopped"));
         }
 
+        byte[] finalFrame = _echoCanceller.FlushCapture();
+        if (bufferToProcess != null && finalFrame.Length > 0)
+        {
+            bufferToProcess.Write(finalFrame, 0, finalFrame.Length);
+            AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(finalFrame, ComputePcm16Peak(finalFrame)));
+        }
+
         if (bufferToProcess == null || bufferToProcess.Length == 0)
         {
             return Array.Empty<byte>();
         }
 
-        byte[] rawBytes = bufferToProcess.ToArray();
+        byte[] processedBytes = bufferToProcess.ToArray();
         bufferToProcess.Dispose();
-
-        try
-        {
-            return ConvertToTargetPcm(rawBytes, format);
-        }
-        catch (Exception ex)
-        {
-            ErrorOccurred?.Invoke(this, new CaptureErrorEventArgs($"Audio resampling failed: {ex.Message}", ex));
-            return Array.Empty<byte>();
-        }
+        return processedBytes;
     }
 
     /// <summary>
@@ -151,9 +154,8 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
     /// formats funnel through <see cref="AudioResampler"/>, so the return value is canonical
     /// regardless of what the endpoint delivered.
     /// </summary>
-    internal static byte[] ConvertToTargetPcm(byte[] rawBytes, WaveFormatInfo format)
+    internal static byte[] ConvertToTargetPcm(ReadOnlySpan<byte> rawBytes, WaveFormatInfo format)
     {
-        ArgumentNullException.ThrowIfNull(rawBytes);
         ArgumentNullException.ThrowIfNull(format);
 
         if (rawBytes.Length == 0)
@@ -171,7 +173,7 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
                 }
 
                 float[] floatSamples = new float[floatCount];
-                Buffer.BlockCopy(rawBytes, 0, floatSamples, 0, floatCount * sizeof(float));
+                rawBytes[..(floatCount * sizeof(float))].CopyTo(MemoryMarshal.AsBytes(floatSamples.AsSpan()));
                 return AudioResampler.ResampleFloatToPcm16Mono(floatSamples, format.SampleRate, format.Channels);
 
             case WaveSampleFormat.Pcm16:
@@ -304,13 +306,20 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
                 _format.BytesPerFrame,
                 (buffer, count) =>
                 {
-                    lock (_lock)
+                    byte[] canonical = ConvertToTargetPcm(buffer.AsSpan(0, count), _format);
+                    byte[] processed = _echoCanceller.ProcessCapture(canonical);
+                    if (processed.Length == 0)
                     {
-                        _inMemoryBuffer?.Write(buffer, 0, count);
+                        return;
                     }
 
-                    float peak = ComputePeak(buffer, count, _format.SampleFormat);
-                    AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(new ReadOnlyMemory<byte>(buffer, 0, count), peak));
+                    lock (_lock)
+                    {
+                        _inMemoryBuffer?.Write(processed, 0, processed.Length);
+                    }
+
+                    float peak = ComputePcm16Peak(processed);
+                    AudioChunkAvailable?.Invoke(this, new AudioChunkEventArgs(processed, peak));
                 });
 
             LastPacketsAcquired += drain.PacketsAcquired;
@@ -327,38 +336,13 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
         }
     }
 
-    private static float ComputePeak(byte[] buffer, int count, WaveSampleFormat format)
+    private static float ComputePcm16Peak(ReadOnlySpan<byte> buffer)
     {
-        if (count == 0)
-        {
-            return 0f;
-        }
-
         float maxPeak = 0f;
-        if (format == WaveSampleFormat.Float32)
+        for (int i = 0; i + 1 < buffer.Length; i += sizeof(short))
         {
-            int floatCount = count / sizeof(float);
-            for (int i = 0; i < floatCount; i++)
-            {
-                float val = Math.Abs(BitConverter.ToSingle(buffer, i * sizeof(float)));
-                if (val > maxPeak)
-                {
-                    maxPeak = val;
-                }
-            }
-        }
-        else if (format == WaveSampleFormat.Pcm16)
-        {
-            int shortCount = count / sizeof(short);
-            for (int i = 0; i < shortCount; i++)
-            {
-                short val = BitConverter.ToInt16(buffer, i * sizeof(short));
-                float norm = Math.Abs(val) / 32768f;
-                if (norm > maxPeak)
-                {
-                    maxPeak = norm;
-                }
-            }
+            float peak = Math.Abs(BitConverter.ToInt16(buffer.Slice(i, sizeof(short))) / 32768f);
+            maxPeak = Math.Max(maxPeak, peak);
         }
 
         return maxPeak;
@@ -427,6 +411,11 @@ public sealed class WasapiAudioCapture : IAudioCaptureService
             _inMemoryBuffer?.Dispose();
             _inMemoryBuffer = null;
             CleanupWasapiResources();
+        }
+
+        if (_ownsEchoCanceller)
+        {
+            _echoCanceller.Dispose();
         }
     }
 
